@@ -43,7 +43,7 @@ def create_prometheus_client(kubeconfig: str) -> KrknPrometheus:
             prom_spec_json = json.loads(prom_spec_json)
             url = prom_spec_json["items"][0]["spec"]["host"]
 
-    if not url.startswith("https://"):
+    if not (url.startswith("http://") or url.startswith("https://")):
         url = f"https://{url}"
 
     # Fetch K8s token to access internal service
