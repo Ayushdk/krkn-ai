@@ -6,7 +6,7 @@ from krkn_ai.utils.logger import init_logger, get_logger
 
 from krkn_ai.algorithm.genetic import GeneticAlgorithm
 from krkn_ai.models.app import AppContext, KrknRunnerType
-from krkn_ai.models.custom_errors import FitnessFunctionCalculationError, PrometheusConnectionError
+from krkn_ai.models.custom_errors import FitnessFunctionCalculationError, MissingScenarioError, PrometheusConnectionError, UniqueScenariosError
 from krkn_ai.utils.fs import read_config_from_file
 from krkn_ai.templates.generator import create_krkn_ai_template
 from krkn_ai.utils.cluster_manager import ClusterManager
@@ -57,7 +57,10 @@ def run(ctx,
     try:
         parsed_config = read_config_from_file(config, param)
         logger.info("Initialized config: %s", config)
-    except ValidationError as err:
+    except (KeyError) as err:
+        logger.error("Unable to parse config file due to missing key: %s", err)
+        exit(1)
+    except (ValidationError) as err:
         logger.error("Unable to parse config file: %s", err)
         exit(1)
 
@@ -79,7 +82,7 @@ def run(ctx,
         genetic.simulate()
 
         genetic.save()
-    except PrometheusConnectionError as e:
+    except (MissingScenarioError, PrometheusConnectionError, UniqueScenariosError) as e:
         logger.error("%s", e)
         exit(1)
     except FitnessFunctionCalculationError as e:

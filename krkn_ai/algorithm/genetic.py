@@ -3,7 +3,7 @@ import copy
 import json
 from typing_extensions import Dict
 import yaml
-from typing import List
+from typing import List, Tuple
 
 from krkn_ai.models.app import CommandRunResult, KrknRunnerType
 
@@ -16,7 +16,7 @@ from krkn_ai.reporter.health_check_reporter import HealthCheckReporter
 from krkn_ai.utils.logger import get_logger
 from krkn_ai.chaos_engines.krkn_runner import KrknRunner
 from krkn_ai.utils.rng import rng
-from krkn_ai.models.custom_errors import PopulationSizeError
+from krkn_ai.models.custom_errors import PopulationSizeError, UniqueScenariosError
 from krkn_ai.utils.output import format_result_filename
 
 logger = get_logger(__name__)
@@ -42,6 +42,7 @@ class GeneticAlgorithm:
         self.population = []
         self.format = format
 
+        self.valid_scenarios = ScenarioFactory.generate_valid_scenarios(self.config)  # List valid scenarios
         self.seen_population: Dict[BaseScenario, CommandRunResult] = {}  # Map between scenario and its result
         self.best_of_generation = []
 
@@ -63,7 +64,8 @@ class GeneticAlgorithm:
         logger.debug("%s", json.dumps(self.config.model_dump(), indent=2))
 
     def simulate(self):
-        self.create_population(self.config.population_size)
+        # Initial population (Gen 0)
+        self.population = self.create_population(self.config.population_size)
 
         for i in range(self.config.generations):
             if len(self.population) == 0:
@@ -90,10 +92,6 @@ class GeneticAlgorithm:
             )
             self.best_of_generation.append(fitness_scores[0])
             logger.info("Best Fitness: %f", fitness_scores[0].fitness_result.fitness_score)
-
-            # We don't want to add a same parent back to population since its already been included
-            for fitness_result in fitness_scores:
-                self.seen_population[fitness_result.scenario] = fitness_result
 
             # Repopulate off-springs
             self.population = []
@@ -126,22 +124,42 @@ class GeneticAlgorithm:
 
             # Inject random members to population to diversify scenarios
             if rng.random() < self.config.population_injection_rate:
-                self.create_population(self.config.population_injection_size)
+                self.population.extend(self.create_population(self.config.population_injection_size))
 
-    def create_population(self, population_size):
+    def create_population(self, population_size) -> List[BaseScenario]:
         """Generate random population for algorithm"""
-        logger.info("Creating random population")
-        logger.info("Population Size: %d", self.config.population_size)
+        logger.info("Creating population of size %d", population_size)
 
         already_seen = set()
-        count = 0
-        while count != population_size:
-            scenario = ScenarioFactory.generate_random_scenario(self.config)
-            if scenario and scenario not in already_seen:
-                self.population.append(scenario)
-                already_seen.add(scenario)
-                count += 1
+        attempts = 0
+        max_attempts = population_size * 10
 
+        population = []
+        # Make attempts to create population of given size, if not possible it will return less samples 
+        while len(population) < population_size and attempts < max_attempts:
+            attempts += 1
+            scenario = ScenarioFactory.generate_random_scenario(self.config, self.valid_scenarios)
+
+            if scenario and scenario not in already_seen:
+                population.append(scenario)
+                already_seen.add(scenario)
+
+        # If we could not generate enough unique scenarios, duplicate some samples
+        if len(population) < population_size:
+            missing = population_size - len(population)
+            logger.warning("Could not generate enough unique scenarios, duplicating %d samples", missing)
+
+            available_scenarios = list(
+                set(population.copy()) | set(self.seen_population.keys())
+            )
+
+            if len(available_scenarios) == 0:
+                raise UniqueScenariosError("Please adjust population size or scenario configuration to generate unique scenarios.")
+
+            for _ in range(missing):
+                population.append(rng.choice(available_scenarios))
+
+        return population
 
     def calculate_fitness(self, scenario: BaseScenario, generation_id: int):
         # If scenario has already been run, do not run it again.
@@ -153,6 +171,10 @@ class GeneticAlgorithm:
             result.generation_id = generation_id
             return result
         scenario_result = self.krkn_client.run(scenario, generation_id)
+
+        # Add scenario to seen population
+        self.seen_population[scenario] = scenario_result
+
         # Save scenario result
         self.save_scenario_result(scenario_result)
         self.health_check_reporter.plot_report(scenario_result)
@@ -183,11 +205,9 @@ class GeneticAlgorithm:
         '''
         Create a new scenario of different type while trying to preserve properties.
         '''
-        possible_scenarios = ScenarioFactory.list_scenarios(self.config)
-
         # check scenarios for common parameters
         common_scenarios = []
-        for _, scenario_cls in possible_scenarios:
+        for _, scenario_cls in self.valid_scenarios:
             # instantiate new scenario for a scenario type
             new_scenario = scenario_cls(cluster_components=self.config.cluster_components)
 
@@ -197,6 +217,7 @@ class GeneticAlgorithm:
             # Do not consider the same scenario type for scenario mutation
             if len(common_params) > 0 and type(new_scenario) != type(scenario):
                 common_scenarios.append(new_scenario)
+
         if len(common_scenarios) == 0:
             logger.debug("No common scenarios found, returning original scenario")
             return False, scenario
