@@ -47,6 +47,9 @@ class ScenarioConfig(BaseModel):
     node_memory_hog: Optional[NodeHogScenarioConfig] = Field(
         alias="node-memory-hog", default=None
     )
+    node_io_hog: Optional[NodeHogScenarioConfig] = Field(
+        alias="node-io-hog", default=None
+    )
     time_scenarios: Optional[TimeScenarioConfig] = Field(
         alias="time-scenarios", default=None
     )

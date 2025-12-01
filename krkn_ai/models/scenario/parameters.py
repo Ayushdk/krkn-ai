@@ -307,3 +307,79 @@ class EgressParameter(BaseParameter):
     krknctl_name: str = "egress"
     value: str = "true"
 
+
+class IOBlockSizeParameter(BaseParameter):
+    '''
+    Size of each write in bytes. Size can be from 1 byte to 4 Megabytes (allowed suffix are b,k,m)
+    '''
+    krknhub_name: str = "IO_BLOCK_SIZE"
+    krknctl_name: str = "io-block-size"
+    value: int = 1048576  # 1MB in bytes (1024 * 1024)
+
+    def get_value(self):
+        """
+        Format the value with appropriate unit suffix (b, k, m).
+        Returns string like "1m", "512k", "1024b"
+        """
+        if self.value < 1024:
+            return f"{self.value}b"
+        elif self.value < 1024 * 1024:
+            return f"{self.value // 1024}k"
+        else:
+            return f"{self.value // (1024 * 1024)}m"
+
+    def mutate(self):
+        """
+        Randomly sample a value between 1 byte and 4MB (4194304 bytes).
+        """
+        # 4MB = 4 * 1024 * 1024 = 4194304 bytes
+        max_bytes = 4 * 1024 * 1024
+        self.value = rng.randint(1, max_bytes)
+
+
+class IOWorkersParameter(BaseParameter):
+    '''
+    Number of stressor instances
+    '''
+    krknhub_name: str = "IO_WORKERS"
+    krknctl_name: str = "io-workers"
+    value: int = 5
+
+    def mutate(self):
+        self.value = rng.randint(1, 10)
+
+
+class IOWriteBytesParameter(BaseParameter):
+    '''
+    writes N bytes for each hdd process. The size can be expressed as % of free space on the file system 
+    or in units of Bytes, KBytes, MBytes and GBytes using the suffix b, k, m or g
+    '''
+    krknhub_name: str = "IO_WRITE_BYTES"
+    krknctl_name: str = "io-write-bytes"
+    value: int = 10  # Percentage of free space (1-100)
+
+    def get_value(self):
+        return f"{self.value}%"
+
+    def mutate(self):
+        """
+        Mutate the percentage value between 1 and 100.
+        """
+        if rng.random() < 0.5:
+            self.value += rng.randint(1, 35) * self.value / 100
+        else:
+            self.value -= rng.randint(1, 25) * self.value / 100
+        self.value = int(self.value)
+        self.value = max(self.value, 1)
+        self.value = min(self.value, 100)
+
+
+class NodeMountPathParameter(BaseParameter):
+    '''
+    the path in the node that will be mounted in the pod and where the io hog will be executed. 
+    NOTE: be sure that kubelet has the rights to write in that node path
+    '''
+    krknhub_name: str = "NODE_MOUNT_PATH"
+    krknctl_name: str = "node-mount-path"
+    value: str = "/root"
+
