@@ -19,7 +19,7 @@ class PVCScenario(Scenario):
     pvc_name: PVCNameParameter = PVCNameParameter()
     pod_name: PodNameParameter = PodNameParameter()
     fill_percentage: FillPercentageParameter = FillPercentageParameter()
-    duration: StandardDurationParameter = StandardDurationParameter(value=20)
+    duration: StandardDurationParameter = StandardDurationParameter(value=60)
 
     def __init__(self, **data):
         super().__init__(**data)

@@ -6,6 +6,7 @@ from krkn_ai.models.scenario.base import Scenario
 from krkn_ai.models.scenario.scenario_network import NetworkScenario
 from krkn_ai.utils.logger import get_logger
 from krkn_ai.utils.rng import rng
+from krkn_ai.utils.pvc_utils import initialize_kubeconfig
 
 from krkn_ai.models.scenario.scenario_dummy import DummyScenario
 from krkn_ai.models.scenario.scenario_pod import PodScenario
@@ -61,7 +62,6 @@ class ScenarioFactory:
             raise MissingScenarioError("No scenarios found. Please provide atleast 1 scenario.")
 
         # Initialize kubeconfig for PVC utilities
-        from krkn_ai.utils.pvc_utils import initialize_kubeconfig
         initialize_kubeconfig(config.kubeconfig_file_path)
         
         # Validate scenarios and find valid scenarios

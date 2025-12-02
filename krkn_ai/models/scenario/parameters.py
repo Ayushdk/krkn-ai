@@ -1,3 +1,4 @@
+import math
 from pydantic import BaseModel, Field
 from krkn_ai.utils.rng import rng
 from krkn_ai.models.scenario.base import BaseParameter
@@ -327,19 +328,13 @@ class FillPercentageParameter(BaseParameter):
         Args:
             min_value: Minimum value (e.g., current usage percentage). If provided, ensures value > min_value.
         """
-        if rng.random() < 0.5:
-            self.value += rng.randint(1, 35) * self.value / 100
-        else:
-            self.value -= rng.randint(1, 25) * self.value / 100
-        self.value = int(self.value)
-        
-        # Ensure value is greater than min_value if provided
+        # Calculate valid range
+        min_value_int = 1
         if min_value is not None:
-            min_value_int = int(min_value) + 1  # Must be at least 1% higher than current
-            self.value = max(self.value, min_value_int)
+            min_value_int = min(math.ceil(min_value) + 1, 99)
         
-        self.value = max(self.value, 1)  # Minimum 1% to ensure some filling
-        self.value = min(self.value, 99)  # Maximum 99%
+        # Random value between min_value_int and 99
+        self.value = rng.randint(min_value_int, 99)
 
 # SYN Flood Scenario Parameters
 class SynFloodPacketSizeParameter(BaseParameter):
