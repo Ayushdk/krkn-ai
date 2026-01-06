@@ -67,9 +67,10 @@ class GeneticAlgorithm:
 
         self.save_config()
 
-        logger.debug("CONFIG")
-        logger.debug("--------------------------------------------------------")
-        logger.debug("%s", json.dumps(self.config.model_dump(), indent=2))
+        # For debugging configuration
+        # logger.debug("CONFIG")
+        # logger.debug("--------------------------------------------------------")
+        # logger.debug("%s", json.dumps(self.config.model_dump(), indent=2))
 
     def simulate(self):
         # Initial population (Gen 0)

@@ -30,19 +30,25 @@ class ElasticSearchClient:
         null_logger = logging.getLogger('null')
         null_logger.addHandler(logging.NullHandler())
 
+        self.client = None
         if self.config.enable:
-            self.client = KrknElastic(
-                safe_logger=null_logger,
-                elastic_url=self.config.server,
-                elastic_port=self.config.port,
-                username=self.config.username,
-                password=self.config.password,
-                verify_certs=self.config.verify_certs
-            )
-            logger.debug("Elasticsearch client initialized: %s", self.config.server)
+            try:
+                self.client = KrknElastic(
+                    safe_logger=null_logger,
+                    elastic_url=self.config.server,
+                    elastic_port=self.config.port,
+                    username=self.config.username,
+                    password=self.config.password,
+                    verify_certs=self.config.verify_certs
+                )
+                self.__test_connection()
+                logger.info("Elasticsearch client initialized: %s:%s", self.config.server, self.config.port)
+            except Exception as e:
+                logger.error("Failed to initialize Elasticsearch client: %s", e)
+                logger.warning("Skipping Elasticsearch indexing")
+                self.client = None
         else:
-            logger.debug("Elasticsearch client is disabled")
+            logger.info("Elasticsearch indexing is disabled")
     
     def __test_connection(self) -> bool:
-        pass
-
+        return self.client.es.ping()
