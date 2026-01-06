@@ -152,13 +152,14 @@ class ElasticConfig(BaseModel):
     Configuration for Elasticsearch integration.
     Stores Krkn-AI run results, fitness scores, and genetic algorithm configuration.
     """
-    enable_elastic: bool = False  # Enable Elasticsearch integration
-    verify_certs: bool = True  # Verify SSL certificates
-    elastic_url: str = ""  # Elasticsearch URL (e.g., https://elasticsearch.example.com)
-    elastic_port: int = 9200  # Elasticsearch port
+    enable: bool = False  # Enable Elasticsearch integration
+    server: str = ""  # Elasticsearch URL (e.g., https://elasticsearch.example.com)
+    port: int = 9200  # Elasticsearch port
     username: str = ""  # Elasticsearch username
-    password: str = ""  # Elasticsearch password
-    results_index: str = "krkn-ai-results"  # Index name for storing Krkn-AI results
+    password: str = Field(exclude=True)  # Elasticsearch password
+    index: str = "krkn-ai-metrics"  # Index name for storing Krkn-AI results
+    verify_certs: bool = True  # Verify SSL certificates
+
 
 class HealthCheckResult(BaseModel):
     name: str
