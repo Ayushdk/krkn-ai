@@ -1,5 +1,8 @@
 # Krkn-AI 🧬⚡
 
+[![Quay](https://img.shields.io/badge/quay.io-krkn--ai-blue?logo=quay)](https://quay.io/repository/krkn-chaos/krkn-ai)
+
+
 > [!CAUTION]  
 > __The tool is currently in under active development, use it at your own risk.__
 
@@ -232,6 +235,8 @@ Options:
   -v, --verbose                   Increase verbosity of output.
   --help                          Show this message and exit.
 ```
+
+> **Note:** You can also run Krkn-AI as a container with Podman or on Kubernetes. See [container instructions](./containers/README.md).
 
 ### Understanding Results
 

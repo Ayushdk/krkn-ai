@@ -53,15 +53,15 @@ scenario:
   pod-scenarios:
     enable: true
   application-outages:
-    enable: false
+    enable: true
   container-scenarios:
     enable: true
   node-cpu-hog:
-    enable: true
+    enable: false
   node-memory-hog:
-    enable: true
+    enable: false
   node-io-hog:
-    enable: true
+    enable: false
   time-scenarios:
     enable: false
   network-scenarios:
@@ -73,7 +73,7 @@ scenario:
   pvc-scenarios:
     enable: false
   kubevirt-scenarios:
-    enable: true
+    enable: false
 
 cluster_components:
 {{ cluster_components }}

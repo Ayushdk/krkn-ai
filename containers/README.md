@@ -2,12 +2,26 @@
 
 Krkn-AI can be run inside containers, which simplifies integration with continuous testing workflows.
 
-## Building the Container
+## Container Image
+
+A pre-built container image is available on Quay.io:
+
+```bash
+podman pull quay.io/krkn-chaos/krkn-ai:latest
+```
+
+All examples in this document use the `quay.io/krkn-chaos/krkn-ai:latest` image by default.
+
+### Building Manually
+
+If you prefer to build the container image yourself:
 
 ```bash
 # Run this command from the root directory
 podman build -t krkn-ai:latest -f containers/Containerfile .
 ```
+
+> **Note:** When using a locally built image, replace `quay.io/krkn-chaos/krkn-ai:latest` with `krkn-ai:latest` in the examples below.
 
 ## Running the Container
 
@@ -26,6 +40,7 @@ mkdir -p ./tmp/container/
 
 # execute discover command
 podman run --rm \
+  --net="host" \
   -v ./tmp/container:/mount:Z \
   -e MODE="discover" \
   -e KUBECONFIG="/mount/kubeconfig.yaml" \
@@ -35,7 +50,7 @@ podman run --rm \
   -e NODE_LABEL="kubernetes.io/hostname" \
   -e SKIP_POD_NAME="nginx-proxy.*" \
   -e VERBOSE="2" \
-  krkn-ai:latest
+  quay.io/krkn-chaos/krkn-ai:latest
 ```
 
 **Environment Variables (Discovery):**
@@ -56,6 +71,7 @@ Executes Krkn-AI tests based on a configuration file.
 
 ```bash
 podman run --rm \
+  --net="host" \
   --privileged \
   -v ./tmp/container:/mount:Z \
   -e MODE=run \
@@ -64,7 +80,7 @@ podman run --rm \
   -e OUTPUT_DIR="/mount/result/" \
   -e EXTRA_PARAMS="HOST=${HOST}" \
   -e VERBOSE=2 \
-  krkn-ai:latest
+  quay.io/krkn-chaos/krkn-ai:latest
 ```
 
 **Environment Variables (Run):**
@@ -89,6 +105,7 @@ If you do not want to use the `--privileged` flag due to security concerns, you 
 mkdir -p ./tmp/container/result && chmod 777 ./tmp/container/result
 
 podman run --rm \
+  --net="host" \
   --user podman \
   --device=/dev/fuse --security-opt label=disable \
   -v ./tmp/container:/mount:Z \
@@ -98,7 +115,7 @@ podman run --rm \
   -e OUTPUT_DIR="/mount/result/" \
   -e EXTRA_PARAMS="HOST=${HOST}" \
   -e VERBOSE=2 \
-  krkn-ai:latest
+  quay.io/krkn-chaos/krkn-ai:latest
 ```
 
 ### Cache KrknHub images
@@ -111,6 +128,7 @@ podman volume create mystorage
 mkdir -p ./tmp/container/result && chmod 777 ./tmp/container/result
 
 podman run --rm \
+  --net="host" \
   --user podman \
   --device=/dev/fuse --security-opt label=disable \
   -v ./tmp/container:/mount:Z \
@@ -121,5 +139,5 @@ podman run --rm \
   -e OUTPUT_DIR="/mount/result/" \
   -e EXTRA_PARAMS="HOST=${HOST}" \
   -e VERBOSE=2 \
-  krkn-ai:latest
+  quay.io/krkn-chaos/krkn-ai:latest
 ```
