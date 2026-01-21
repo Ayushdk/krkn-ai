@@ -40,22 +40,17 @@ class PVCScenario(Scenario):
         return params
 
     def mutate(self):
-        # Filter out disabled namespaces
-        enabled_namespaces = [ns for ns in self._cluster_components.namespaces if not ns.is_disabled]
-        
-        if len(enabled_namespaces) == 0:
+        if len(self._cluster_components.namespaces) == 0:
             raise ScenarioParameterInitError("No namespaces found in cluster components")
         
         namespace_pvc_tuple: List[Tuple[Namespace, PVC]] = []  # (namespace, pvc)
         namespace_pod_tuple: List[Tuple[Namespace, Pod]] = []  # (namespace, pod)
         
-        for namespace in enabled_namespaces:
+        for namespace in self._cluster_components.namespaces:
             if namespace.pvcs:
-                # Filter out disabled PVCs
-                namespace_pvc_tuple.extend((namespace, pvc) for pvc in namespace.pvcs if not pvc.is_disabled)
+                namespace_pvc_tuple.extend((namespace, pvc) for pvc in namespace.pvcs)
             if namespace.pods:
-                # Filter out disabled pods
-                namespace_pod_tuple.extend((namespace, pod) for pod in namespace.pods if not pod.is_disabled)
+                namespace_pod_tuple.extend((namespace, pod) for pod in namespace.pods)
         
         # Check availability before mutation - skip test if no PVCs or pods found
         if not namespace_pvc_tuple and not namespace_pod_tuple:

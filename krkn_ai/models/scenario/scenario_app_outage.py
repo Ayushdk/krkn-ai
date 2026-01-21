@@ -33,13 +33,9 @@ class AppOutageScenario(Scenario):
     def mutate(self):
         namespace_pod_tuple: List[Tuple[Namespace, Pod]] = []
 
-        # look for pods with labels, excluding disabled namespaces and pods
+        # look for pods with labels
         for namespace in self._cluster_components.namespaces:
-            if namespace.is_disabled:
-                continue
             for pod in namespace.pods:
-                if pod.is_disabled:
-                    continue
                 if len(pod.labels) > 0:
                     namespace_pod_tuple.append((namespace, pod))
 

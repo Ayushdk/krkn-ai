@@ -40,12 +40,10 @@ class SynFloodScenario(Scenario):
         ]
 
     def mutate(self):
-        # Filter out disabled namespaces and services
         namespace_candidates = [
             ns for ns in self._cluster_components.namespaces
-            if not ns.is_disabled
-            and getattr(ns, "services", None)
-            and any(service.ports and not service.is_disabled for service in ns.services)
+            if getattr(ns, "services", None)
+            and any(service.ports for service in ns.services)
         ]
 
         if len(namespace_candidates) == 0:
@@ -55,8 +53,7 @@ class SynFloodScenario(Scenario):
         self.namespace.value = namespace.name
 
         services_with_ports = [
-            service for service in namespace.services 
-            if service.ports and not service.is_disabled
+            service for service in namespace.services if service.ports
         ]
         
         if len(services_with_ports) == 0:
