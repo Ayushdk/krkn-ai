@@ -156,10 +156,11 @@ class GeneticAlgorithm:
             self.update_exploration_tracking()
 
             # Check stopping criteria after fitness evaluation (for fitness threshold, saturation, and exploration)
-            should_stop, reason = self.should_stop(cur_generation + 1, time.time() - start_time)
+            elapsed_after_eval = time.time() - start_time
+            should_stop, reason = self.should_stop(cur_generation + 1, elapsed_after_eval)
             if should_stop:
                 logger.info("Stopping algorithm: %s", reason)
-                logger.info("Completed %d generations in %s", cur_generation + 1, format_duration(time.time() - start_time))
+                logger.info("Completed %d generations in %s", cur_generation + 1, format_duration(elapsed_after_eval))
                 break
 
             self.adapt_mutation_rate()
@@ -289,10 +290,7 @@ class GeneticAlgorithm:
         """
         threshold = self.config.stopping_criteria.fitness_threshold
         
-        if threshold is None:
-            return False, ""
-        
-        if len(self.best_of_generation) == 0:
+        if threshold is None or not self.best_of_generation:
             return False, ""
         
         best_fitness = self.best_of_generation[-1].fitness_result.fitness_score
@@ -305,6 +303,7 @@ class GeneticAlgorithm:
     def check_generation_saturation(self) -> Tuple[bool, str]:
         """
         Check if the fitness score has not improved for the configured number of generations.
+        Note: This method only checks the counter value. Use update_saturation_tracking() to update it.
         
         Returns:
             Tuple of (should_stop: bool, reason: str)
@@ -313,20 +312,6 @@ class GeneticAlgorithm:
         
         if saturation_limit is None:
             return False, ""
-        
-        if len(self.best_of_generation) < 2:
-            return False, ""
-        
-        # Compare current best with previous best
-        prev_best = self.best_of_generation[-2].fitness_result.fitness_score
-        curr_best = self.best_of_generation[-1].fitness_result.fitness_score
-        
-        # Check if there's improvement (using small epsilon for float comparison)
-        improvement = curr_best - prev_best
-        if improvement <= 0.0001:  # No significant improvement
-            self.saturation_stagnant_generations += 1
-        else:
-            self.saturation_stagnant_generations = 0
         
         if self.saturation_stagnant_generations >= saturation_limit:
             return True, f"Generation saturation reached (no improvement for {saturation_limit} generations)"

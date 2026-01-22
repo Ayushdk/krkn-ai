@@ -208,6 +208,13 @@ class StoppingCriteria(BaseModel):
     generation_saturation: Optional[int] = None  # Stop if no improvement for N generations
     exploration_saturation: Optional[int] = None  # Stop if no new scenarios for N generations
 
+    @field_validator('generation_saturation', 'exploration_saturation', mode='after')
+    @classmethod
+    def validate_positive_int(cls, value: Optional[int]) -> Optional[int]:
+        if value is not None and value <= 0:
+            raise ValueError('Value must be a positive integer greater than 0')
+        return value
+
 
 class ConfigFile(BaseModel):
     kubeconfig_file_path: str  # Path to kubeconfig
