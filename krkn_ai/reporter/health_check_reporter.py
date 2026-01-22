@@ -171,9 +171,12 @@ class HealthCheckReporter:
     def write_fitness_result(self, fitness_result: CommandRunResult):
         """
         Write fitness result to a CSV file.
-        """
+        
+        To handle dynamic SLO columns that may vary between scenarios,
+        we read the existing CSV, concatenate the new row, and rewrite
+        the entire file. This ensures consistent columns across all rows.
+        '''
         report_path = os.path.join(self.output_dir, "all.csv")
-        file_exists = os.path.isfile(report_path)
 
         # Parse scenario params
         params = []
@@ -186,9 +189,34 @@ class HealthCheckReporter:
         # SLO breakdown
         fitness_function_slos = {}
         for fitness_function_item in fitness_result.fitness_result.scores:
-            fitness_function_slos[f"slo_{fitness_function_item.id}"] = (
-                fitness_function_item.fitness_score
-            )
+            fitness_function_slos[f"slo_{fitness_function_item.id}"] = fitness_function_item.fitness_score
+
+        new_row = pd.DataFrame([{
+            "generation_id": fitness_result.generation_id,
+            "scenario_id": fitness_result.scenario_id,
+            "scenario": fitness_result.scenario.name,
+            "parameters": " ".join(params),
+            **fitness_function_slos,
+            "health_check_failure_score": fitness_result.fitness_result.health_check_failure_score,
+            "health_check_response_time_score": fitness_result.fitness_result.health_check_response_time_score,
+            "krkn_failure_score": fitness_result.fitness_result.krkn_failure_score,
+            "fitness_score": fitness_result.fitness_result.fitness_score,
+        }])
+
+        # Read existing data and concatenate with new row to ensure consistent columns
+        if os.path.isfile(report_path):
+            try:
+                existing_df = pd.read_csv(report_path)
+                df = pd.concat([existing_df, new_row], ignore_index=True)
+            except (pd.errors.EmptyDataError, pd.errors.ParserError) as e:
+                # File exists but is empty or malformed, start fresh
+                logger.warning("Could not read existing CSV (%s), starting fresh: %s", report_path, e)
+                df = new_row
+        else:
+            df = new_row
+
+        df.to_csv(report_path, index=False)
+        logger.debug("Fitness result updated.")
 
         df = pd.DataFrame(
             [

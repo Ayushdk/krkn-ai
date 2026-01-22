@@ -1,9 +1,8 @@
 """
 Tests for GeneticAlgorithm.adapt_mutation_rate method
 """
-
 import pytest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from krkn_ai.models.config import AdaptiveMutation
 from krkn_ai.models.app import FitnessResult

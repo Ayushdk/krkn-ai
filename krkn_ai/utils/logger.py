@@ -7,7 +7,6 @@ _LOGGER_INITIALIZED = False
 _LOG_DIR: Optional[str] = None
 _VERBOSE: bool = False
 
-
 def init_logger(output_dir: Optional[str] = None, verbose: bool = False):
     """Initialize global logger configuration once."""
 

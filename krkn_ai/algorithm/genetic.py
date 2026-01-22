@@ -168,6 +168,8 @@ class GeneticAlgorithm:
 
             self.adapt_mutation_rate()
 
+            self.adapt_mutation_rate()
+
             # Repopulate off-springs
             self.population = []
             for _ in range(self.config.population_size // 2):

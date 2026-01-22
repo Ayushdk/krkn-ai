@@ -189,6 +189,14 @@ class AdaptiveMutation(BaseModel):
     generations: int = 5
 
 
+class AdaptiveMutation(BaseModel):
+    enable: bool = False
+    min: float = 0.05
+    max: float = 0.9
+    threshold: float = 0.1
+    generations: int = 5
+
+
 class ConfigFile(BaseModel):
     kubeconfig_file_path: str  # Path to kubeconfig
     parameters: Dict[str, str] = {}
@@ -236,6 +244,6 @@ class ConfigFile(BaseModel):
         default_factory=ElasticConfig
     )  # Elasticsearch configuration
 
-    adaptive_mutation: AdaptiveMutation = AdaptiveMutation()
-
     cluster_components: ClusterComponents
+
+    adaptive_mutation: AdaptiveMutation = AdaptiveMutation()
