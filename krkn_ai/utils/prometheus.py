@@ -1,7 +1,7 @@
 import os
 import json
+from kubernetes import client, config
 from krkn_lib.prometheus.krkn_prometheus import KrknPrometheus
-from krkn_ai.utils import run_shell
 from krkn_ai.utils.fs import env_is_truthy
 from krkn_ai.utils.logger import get_logger
 from krkn_ai.models.custom_errors import PrometheusConnectionError
@@ -13,7 +13,7 @@ def is_openshift(kubeconfig: str) -> bool:
     """
     Checks if the targeted cluster is an OpenShift cluster.
 
-    Attempts to query OpenShift cluster versions via kubectl.
+    Attempts to query OpenShift cluster versions via the Kubernetes Python client.
 
     Args:
         kubeconfig: Path to the Kubernetes configuration file.
@@ -21,11 +21,17 @@ def is_openshift(kubeconfig: str) -> bool:
     Returns:
         True if the cluster is OpenShift, False otherwise.
     """
-    _, returncode = run_shell(
-        f"kubectl --kubeconfig={kubeconfig} get clusterversions.config.openshift.io",
-        do_not_log=True,
-    )
-    return returncode == 0
+    try:
+        config.load_kube_config(config_file=kubeconfig)
+        api = client.CustomObjectsApi()
+        api.list_cluster_custom_object(
+            group="config.openshift.io",
+            version="v1",
+            plural="clusterversions",
+        )
+        return True
+    except Exception:
+        return False
 
 
 def create_prometheus_client(kubeconfig: str) -> KrknPrometheus:
@@ -35,7 +41,7 @@ def create_prometheus_client(kubeconfig: str) -> KrknPrometheus:
     Discovery Priority:
     1. Explicit environment variables: `PROMETHEUS_URL` and `PROMETHEUS_TOKEN`.
     2. OpenShift Auto-discovery: If the cluster is OpenShift, attempts to discover
-       the URL from routes and the token via `oc whoami`.
+       the URL from routes and the token from the kubeconfig context.
     3. Error: Raises `PrometheusConnectionError` with actionable instructions.
 
     Args:
@@ -56,23 +62,21 @@ def create_prometheus_client(kubeconfig: str) -> KrknPrometheus:
 
     is_ocp = is_openshift(kubeconfig)
 
-    # Case 2: Vanilla Kubernetes or missing env vars on non-OCP
-    if not is_ocp:
-        if not url or not token:
-            raise PrometheusConnectionError(
-                "Prometheus configuration missing for Kubernetes cluster.\n"
-                "Please set the following environment variables:\n"
-                "  export PROMETHEUS_URL=https://<prometheus-host>\n"
-                "  export PROMETHEUS_TOKEN=<bearer-token>\n\n"
-                "For generic Kubernetes clusters, explicit configuration is required."
-            )
-        return _validate_and_create_client(url, token)
+    # Case 2: For non-OpenShift clusters, both variables are required.
+    if not is_ocp and (not url or not token):
+        raise PrometheusConnectionError(
+            "Prometheus configuration missing for Kubernetes cluster.\n"
+            "Please set the following environment variables:\n"
+            "  export PROMETHEUS_URL=https://<prometheus-host>\n"
+            "  export PROMETHEUS_TOKEN=<bearer-token>\n\n"
+            "For generic Kubernetes clusters, explicit configuration is required."
+        )
 
     # Case 3: OpenShift Auto-discovery
-    if not url:
+    if is_ocp and not url:
         url = _discover_openshift_prometheus_url(kubeconfig)
 
-    if not token:
+    if is_ocp and not token:
         token = _discover_openshift_prometheus_token(kubeconfig)
 
     if not url or not token:
@@ -97,17 +101,16 @@ def _discover_openshift_prometheus_url(kubeconfig: str) -> str:
         The discovered host URL or an empty string if discovery fails.
     """
     try:
-        prom_spec_json, code = run_shell(
-            f"kubectl --kubeconfig={kubeconfig} -n openshift-monitoring "
-            "get route -l app.kubernetes.io/name=thanos-query -o json",
-            do_not_log=True,
+        config.load_kube_config(config_file=kubeconfig)
+        api = client.CustomObjectsApi()
+        routes = api.list_namespaced_custom_object(
+            group="route.openshift.io",
+            version="v1",
+            namespace="openshift-monitoring",
+            plural="routes",
+            label_selector="app.kubernetes.io/name=thanos-query",
         )
-        if code != 0:
-            logger.debug("Failed to fetch Prometheus route from OpenShift")
-            return ""
-
-        prom_spec = json.loads(prom_spec_json)
-        items = prom_spec.get("items", [])
+        items = routes.get("items", [])
         if not items:
             logger.debug("No Prometheus Thanos Query routes found")
             return ""
@@ -122,7 +125,7 @@ def _discover_openshift_prometheus_url(kubeconfig: str) -> str:
 
 def _discover_openshift_prometheus_token(kubeconfig: str) -> str:
     """
-    Attempts to discover an authentication token using the OpenShift CLI.
+    Extracts authentication token directly from loaded kubeconfig context.
 
     Args:
         kubeconfig: Path to the Kubernetes configuration file.
@@ -131,14 +134,12 @@ def _discover_openshift_prometheus_token(kubeconfig: str) -> str:
         The authentication token or an empty string if discovery fails.
     """
     try:
-        token, code = run_shell(
-            f"oc --kubeconfig={kubeconfig} whoami -t",
-            do_not_log=True,
-        )
-        if code != 0:
-            logger.debug("Failed to retrieve token via 'oc whoami -t'")
-            return ""
-        return token.strip()
+        config.load_kube_config(config_file=kubeconfig)
+        api_client = config.new_client_from_config(config_file=kubeconfig)
+        token = api_client.configuration.api_key.get("authorization")
+        if token:
+            return token.replace("Bearer ", "")
+        return ""
     except Exception as e:
         logger.debug(f"Unexpected error during token discovery: {e}")
         return ""
@@ -162,7 +163,7 @@ def _validate_and_create_client(url: str, token: str) -> KrknPrometheus:
     if not url.startswith(("http://", "https://")):
         url = f"https://{url}"
 
-    logger.debug(f"Initializing Prometheus client: {url}")
+    logger.debug("Initializing Prometheus client: %s", url)
 
     try:
         client = KrknPrometheus(url.strip(), token.strip())

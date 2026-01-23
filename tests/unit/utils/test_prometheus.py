@@ -1,9 +1,8 @@
 """
-Unit tests for Prometheus utility functions and client creation logic.
+Unit tests for Prometheus utility functions and client creation logic using Kubernetes Python client.
 """
 
 import os
-import json
 import pytest
 from unittest.mock import Mock, patch
 from krkn_ai.utils.prometheus import is_openshift, create_prometheus_client
@@ -13,15 +12,22 @@ from krkn_ai.models.custom_errors import PrometheusConnectionError
 class TestPrometheusUtils:
     """Tests for Prometheus utility functions."""
 
-    def test_is_openshift_positive(self):
+    @patch("krkn_ai.utils.prometheus.config.load_kube_config")
+    @patch("krkn_ai.utils.prometheus.client.CustomObjectsApi")
+    def test_is_openshift_positive(self, mock_api_class, mock_load):
         """Should return True when clusterversions resource is found."""
-        with patch("krkn_ai.utils.prometheus.run_shell", return_value=("", 0)):
-            assert is_openshift("/tmp/test-kubeconfig") is True
+        mock_api = mock_api_class.return_value
+        mock_api.list_cluster_custom_object.return_value = {"items": []}
+        assert is_openshift("/tmp/test-kubeconfig") is True
+        mock_load.assert_called_with(config_file="/tmp/test-kubeconfig")
 
-    def test_is_openshift_negative(self):
-        """Should return False when clusterversions resource is missing."""
-        with patch("krkn_ai.utils.prometheus.run_shell", return_value=("", 1)):
-            assert is_openshift("/tmp/test-kubeconfig") is False
+    @patch("krkn_ai.utils.prometheus.config.load_kube_config")
+    @patch("krkn_ai.utils.prometheus.client.CustomObjectsApi")
+    def test_is_openshift_negative(self, mock_api_class, _):
+        """Should return False when clusterversions resource is missing or access denied."""
+        mock_api = mock_api_class.return_value
+        mock_api.list_cluster_custom_object.side_effect = Exception("Not OpenShift")
+        assert is_openshift("/tmp/test-kubeconfig") is False
 
     @patch("krkn_ai.utils.prometheus.KrknPrometheus")
     def test_create_client_from_env_vars(self, mock_prom_class):
@@ -43,30 +49,34 @@ class TestPrometheusUtils:
             assert client == mock_client
 
     @patch("krkn_ai.utils.prometheus.is_openshift", return_value=True)
+    @patch("krkn_ai.utils.prometheus.config.load_kube_config")
+    @patch("krkn_ai.utils.prometheus.client.CustomObjectsApi")
+    @patch("krkn_ai.utils.prometheus.config.new_client_from_config")
     @patch("krkn_ai.utils.prometheus.KrknPrometheus")
-    def test_create_client_autodiscovery_openshift(self, mock_prom_class, _):
-        """Should auto-discover URL and token on OpenShift clusters."""
-        route_data = {"items": [{"spec": {"host": "thanos-query.apps.cluster.com"}}]}
+    def test_create_client_autodiscovery_openshift(self, mock_prom_class, mock_new_client, mock_api_class, _, __):
+        """Should auto-discover URL and token on OpenShift clusters using Python client."""
+        # Mock Route discovery
+        mock_api = mock_api_class.return_value
+        mock_api.list_namespaced_custom_object.return_value = {
+            "items": [{"spec": {"host": "thanos-query.apps.cluster.com"}}]
+        }
+        
+        # Mock Token extraction
+        mock_api_client = mock_new_client.return_value
+        mock_api_client.configuration.api_key = {"authorization": "Bearer k8s-token"}
 
         with patch.dict(os.environ, {}, clear=True):
-            with patch("krkn_ai.utils.prometheus.run_shell") as mock_shell:
-                # 1. Route discovery, 2. Token discovery
-                mock_shell.side_effect = [
-                    (json.dumps(route_data), 0),
-                    ("oc-token", 0),
-                ]
+            mock_client = Mock()
+            mock_client.process_query.return_value = None
+            mock_prom_class.return_value = mock_client
 
-                mock_client = Mock()
-                mock_client.process_query.return_value = None
-                mock_prom_class.return_value = mock_client
+            client = create_prometheus_client("/tmp/test-kubeconfig")
 
-                client = create_prometheus_client("/tmp/test-kubeconfig")
-
-                mock_prom_class.assert_called_once()
-                args, _ = mock_prom_class.call_args
-                assert args[0] == "https://thanos-query.apps.cluster.com"
-                assert args[1] == "oc-token"
-                assert client == mock_client
+            mock_prom_class.assert_called_once()
+            args, _ = mock_prom_class.call_args
+            assert args[0] == "https://thanos-query.apps.cluster.com"
+            assert args[1] == "k8s-token"
+            assert client == mock_client
 
     @patch("krkn_ai.utils.prometheus.is_openshift", return_value=False)
     def test_create_client_missing_config_vanilla_k8s(self, _):
@@ -77,23 +87,29 @@ class TestPrometheusUtils:
             assert "Prometheus configuration missing" in str(exc.value)
 
     @patch("krkn_ai.utils.prometheus.is_openshift", return_value=True)
-    def test_create_client_autodiscovery_failure_openshift(self, _):
+    @patch("krkn_ai.utils.prometheus.config.load_kube_config")
+    @patch("krkn_ai.utils.prometheus.client.CustomObjectsApi")
+    def test_create_client_autodiscovery_failure_openshift(self, mock_api_class, _, __):
         """Should raise connection error if discovery fails on OpenShift."""
+        mock_api = mock_api_class.return_value
+        mock_api.list_namespaced_custom_object.side_effect = Exception("API error")
+        
         with patch.dict(os.environ, {}, clear=True):
-            with patch("krkn_ai.utils.prometheus.run_shell", return_value=("", 1)):
-                with pytest.raises(PrometheusConnectionError) as exc:
-                    create_prometheus_client("/tmp/test-kubeconfig")
-                assert "discovery failed on OpenShift" in str(exc.value)
+            with pytest.raises(PrometheusConnectionError) as exc:
+                create_prometheus_client("/tmp/test-kubeconfig")
+            assert "discovery failed on OpenShift" in str(exc.value)
 
     @patch("krkn_ai.utils.prometheus.is_openshift", return_value=True)
-    def test_create_client_malformed_route_openshift(self, _):
+    @patch("krkn_ai.utils.prometheus.config.load_kube_config")
+    @patch("krkn_ai.utils.prometheus.client.CustomObjectsApi")
+    def test_create_client_malformed_route_openshift(self, mock_api_class, _, __):
         """Should handle empty route lists gracefully on OpenShift."""
+        mock_api = mock_api_class.return_value
+        mock_api.list_namespaced_custom_object.return_value = {"items": []}
+        
         with patch.dict(os.environ, {}, clear=True):
-            with patch(
-                "krkn_ai.utils.prometheus.run_shell", return_value=('{"items": []}', 0)
-            ):
-                with pytest.raises(PrometheusConnectionError):
-                    create_prometheus_client("/tmp/test-kubeconfig")
+            with pytest.raises(PrometheusConnectionError):
+                create_prometheus_client("/tmp/test-kubeconfig")
 
     @patch("krkn_ai.utils.prometheus.KrknPrometheus")
     def test_create_client_connection_test_failure(self, mock_prom_class):
