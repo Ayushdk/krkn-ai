@@ -552,11 +552,13 @@ class GeneticAlgorithm:
             if gen_fitness_scores:
                 gen_average = sum(gen_fitness_scores) / len(gen_fitness_scores)
 
-            fitness_progression.append({
-                "generation": i,
-                "best": result.fitness_result.fitness_score,
-                "average": round(gen_average, 4),
-            })
+            fitness_progression.append(
+                {
+                    "generation": i,
+                    "best": result.fitness_result.fitness_score,
+                    "average": round(gen_average, 4),
+                }
+            )
 
         # Generate best scenarios list (sorted by fitness score, top 10)
         sorted_results = sorted(
@@ -573,14 +575,16 @@ class GeneticAlgorithm:
                     for param in result.scenario.parameters
                 }
 
-            best_scenarios.append({
-                "rank": rank,
-                "scenario_id": result.scenario_id,
-                "generation": result.generation_id,
-                "fitness_score": result.fitness_result.fitness_score,
-                "scenario_type": result.scenario.name,
-                "parameters": scenario_params,
-            })
+            best_scenarios.append(
+                {
+                    "rank": rank,
+                    "scenario_id": result.scenario_id,
+                    "generation": result.generation_id,
+                    "fitness_score": result.fitness_result.fitness_score,
+                    "scenario_type": result.scenario.name,
+                    "parameters": scenario_params,
+                }
+            )
 
         # Build the results summary
         results_summary: Dict[str, Any] = {
