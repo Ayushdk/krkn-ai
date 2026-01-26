@@ -6,7 +6,7 @@ import time
 import uuid
 from typing_extensions import Dict
 import yaml
-from typing import List, Optional, Any
+from typing import List, Optional
 
 from krkn_ai.models.app import CommandRunResult, KrknRunnerType
 
@@ -21,6 +21,7 @@ from krkn_ai.models.scenario.factory import ScenarioFactory
 from krkn_ai.models.config import ConfigFile
 from krkn_ai.reporter.generations_reporter import GenerationsReporter
 from krkn_ai.reporter.health_check_reporter import HealthCheckReporter
+from krkn_ai.reporter.json_summary_reporter import JSONSummaryReporter
 from krkn_ai.utils.logger import get_logger
 from krkn_ai.chaos_engines.krkn_runner import KrknRunner
 from krkn_ai.utils.rng import rng
@@ -500,131 +501,19 @@ class GeneticAlgorithm:
         self.health_check_reporter.sort_fitness_result_csv()
 
         # Generate and save unified results summary
-        results_summary = self.generate_results_summary()
-        self.save_results_summary(results_summary)
+        summary_reporter = JSONSummaryReporter(
+            run_uuid=self.run_uuid,
+            config=self.config,
+            seen_population=self.seen_population,
+            best_of_generation=self.best_of_generation,
+            start_time=self.start_time,
+            end_time=self.end_time,
+            completed_generations=self.completed_generations,
+            seed=self.seed,
+        )
+        summary_reporter.save(self.output_dir)
 
         # TODO: Send run summary to Elasticsearch
-
-    def generate_results_summary(self) -> Dict[str, Any]:
-        """
-        Generate a unified results summary containing all run statistics.
-
-        Returns:
-            Dict containing run metadata, config summary, best scenarios,
-            and fitness progression over generations.
-        """
-        # Calculate duration
-        duration_seconds = 0.0
-        if self.start_time and self.end_time:
-            duration_seconds = (self.end_time - self.start_time).total_seconds()
-
-        # Get all fitness scores for statistics
-        all_fitness_scores = [
-            result.fitness_result.fitness_score
-            for result in self.seen_population.values()
-        ]
-
-        # Calculate average fitness score
-        average_fitness_score = 0.0
-        if all_fitness_scores:
-            average_fitness_score = sum(all_fitness_scores) / len(all_fitness_scores)
-
-        # Get best fitness score
-        best_fitness_score = 0.0
-        if all_fitness_scores:
-            best_fitness_score = max(all_fitness_scores)
-
-        # Count unique scenarios by their string representation
-        unique_scenarios = set()
-        for result in self.seen_population.values():
-            unique_scenarios.add(str(result.scenario))
-
-        # Generate fitness progression from best_of_generation
-        fitness_progression = []
-        for i, result in enumerate(self.best_of_generation):
-            # Calculate average fitness for this generation from seen_population
-            gen_fitness_scores = [
-                r.fitness_result.fitness_score
-                for r in self.seen_population.values()
-                if r.generation_id == i
-            ]
-            gen_average = 0.0
-            if gen_fitness_scores:
-                gen_average = sum(gen_fitness_scores) / len(gen_fitness_scores)
-
-            fitness_progression.append(
-                {
-                    "generation": i,
-                    "best": result.fitness_result.fitness_score,
-                    "average": round(gen_average, 4),
-                }
-            )
-
-        # Generate best scenarios list (sorted by fitness score, top 10)
-        sorted_results = sorted(
-            self.seen_population.values(),
-            key=lambda x: x.fitness_result.fitness_score,
-            reverse=True,
-        )
-        best_scenarios = []
-        for rank, result in enumerate(sorted_results[:10], start=1):
-            scenario_params = {}
-            if hasattr(result.scenario, "parameters"):
-                scenario_params = {
-                    param.get_name(): param.get_value()
-                    for param in result.scenario.parameters
-                }
-
-            best_scenarios.append(
-                {
-                    "rank": rank,
-                    "scenario_id": result.scenario_id,
-                    "generation": result.generation_id,
-                    "fitness_score": result.fitness_result.fitness_score,
-                    "scenario_type": result.scenario.name,
-                    "parameters": scenario_params,
-                }
-            )
-
-        # Build the results summary
-        results_summary: Dict[str, Any] = {
-            "run_id": self.run_uuid,
-            "seed": self.seed,
-            "start_time": self.start_time.isoformat() if self.start_time else None,
-            "end_time": self.end_time.isoformat() if self.end_time else None,
-            "duration_seconds": round(duration_seconds, 2),
-            "config": {
-                "generations": self.config.generations,
-                "population_size": self.config.population_size,
-                "mutation_rate": self.config.mutation_rate,
-                "scenario_mutation_rate": self.config.scenario_mutation_rate,
-                "crossover_rate": self.config.crossover_rate,
-                "composition_rate": self.config.composition_rate,
-            },
-            "summary": {
-                "total_scenarios_executed": len(self.seen_population),
-                "unique_scenarios": len(unique_scenarios),
-                "generations_completed": self.completed_generations,
-                "best_fitness_score": round(best_fitness_score, 4),
-                "average_fitness_score": round(average_fitness_score, 4),
-            },
-            "best_scenarios": best_scenarios,
-            "fitness_progression": fitness_progression,
-        }
-
-        return results_summary
-
-    def save_results_summary(self, results_summary: Dict[str, Any]):
-        """
-        Save the results summary to a JSON file in the output directory.
-
-        Args:
-            results_summary: Dictionary containing the run summary data.
-        """
-        output_path = os.path.join(self.output_dir, "results.json")
-        with open(output_path, "w", encoding="utf-8") as f:
-            json.dump(results_summary, f, indent=2)
-        logger.info("Results summary saved to %s", output_path)
 
     def save_config(self):
         logger.info("Saving config file to config.yaml")
