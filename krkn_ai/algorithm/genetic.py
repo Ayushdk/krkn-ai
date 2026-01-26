@@ -179,8 +179,6 @@ class GeneticAlgorithm:
                 )
                 break
 
-            self.adapt_mutation_rate()
-
             # Repopulate off-springs
             self.population = []
             for _ in range(self.config.population_size // 2):
@@ -744,3 +742,4 @@ class GeneticAlgorithm:
             if isinstance(param, param_type):
                 param.value = value
                 return
+            
