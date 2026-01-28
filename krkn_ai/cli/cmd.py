@@ -15,6 +15,7 @@ from krkn_ai.models.custom_errors import (
 from krkn_ai.utils.fs import read_config_from_file
 from krkn_ai.templates.generator import create_krkn_ai_template
 from krkn_ai.utils.cluster_manager import ClusterManager
+# from krkn_ai.models.config import SafetyConfig
 
 
 @click.group(context_settings={"show_default": True})
@@ -77,6 +78,15 @@ def run(
     try:
         parsed_config = read_config_from_file(config, param, kubeconfig)
         logger.info("Initialized config: %s", config)
+        logger.info("Applying safety configuration...")
+        parsed_config.cluster_components.apply_safety(parsed_config.safety)
+        parsed_config.cluster_components = (
+            parsed_config.cluster_components.get_active_components()
+        )
+        # 🔍 DEBUG: verify safety worked
+        logger.info("Remaining namespaces after safety:")
+        for ns in parsed_config.cluster_components.namespaces:
+            logger.info(" - %s", ns.name)
     except KeyError as err:
         logger.error("Unable to parse config file due to missing key: %s", err)
         exit(1)

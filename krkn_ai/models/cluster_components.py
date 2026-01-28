@@ -1,6 +1,11 @@
 from typing import Dict, List, Optional, Union
 from pydantic import BaseModel
+import fnmatch
+import re
+from krkn_ai.utils.logger import get_logger
+from krkn_ai.models.safety import SafetyConfig
 
+logger = get_logger(__name__)
 
 class Container(BaseModel):
     name: str
@@ -85,3 +90,55 @@ class ClusterComponents(BaseModel):
         active_nodes = [n for n in self.nodes if not n.disabled]
 
         return ClusterComponents(namespaces=active_namespaces, nodes=active_nodes)
+
+    def apply_safety(self, safety: SafetyConfig) -> None:
+        """
+        Apply safety rules by marking protected components as disabled.
+
+        This ensures Krkn-AI never disrupts its own dependencies
+        (Prometheus, monitoring stack, control-plane, etc).
+        """
+
+        # namespaces & their children
+        for namespace in self.namespaces:
+            # namespace exclusion
+            for pattern in safety.excluded_namespaces:
+                if fnmatch.fnmatch(namespace.name, pattern):
+                    namespace.disabled = True
+                    logger.info(f"🛡️  Protected namespace: {namespace.name}")
+                    break
+
+            # skip pod-level checks if namespace disabled
+            if namespace.disabled:
+                continue
+
+            # pods
+            for pod in namespace.pods:
+                # label-based exclusion
+                for label in safety.excluded_pod_labels:
+                    if "=" in label:
+                        key, value = label.split("=", 1)
+                        if pod.labels.get(key) == value:
+                            pod.disabled = True
+                            logger.debug(
+                                f"🛡️  Protected pod by label: {pod.name}"
+                            )
+                            break
+
+                # name pattern exclusion
+                for pattern in safety.excluded_pod_name_patterns:
+                    if re.match(pattern, pod.name):
+                        pod.disabled = True
+                        logger.debug(
+                            f"🛡️  Protected pod by pattern: {pod.name}"
+                        )
+                        break
+
+        # nodes
+        for node in self.nodes:
+            for label in safety.excluded_node_labels:
+                if label in node.labels:
+                    node.disabled = True
+                    logger.info(f"🛡️  Protected node: {node.name}")
+                    break
+

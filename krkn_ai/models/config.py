@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 import krkn_ai.constants as const
 from krkn_ai.models.cluster_components import ClusterComponents
 from krkn_ai.utils import id_generator
-
+from krkn_ai.models.safety import SafetyConfig
 
 class PodScenarioConfig(BaseModel):
     enable: bool = False
@@ -235,6 +235,8 @@ class ConfigFile(BaseModel):
     elastic: Optional[ElasticConfig] = Field(
         default_factory=ElasticConfig
     )  # Elasticsearch configuration
+
+    safety: SafetyConfig = Field(default_factory=SafetyConfig)
 
     cluster_components: ClusterComponents
 
