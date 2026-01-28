@@ -11,21 +11,11 @@ def test_default_safety_blocks_kube_system():
         namespaces=[
             Namespace(
                 name="kube-system",
-                pods=[
-                    Pod(
-                        name="prometheus-k8s-0",
-                        labels={"app": "prometheus"}
-                    )
-                ],
+                pods=[Pod(name="prometheus-k8s-0", labels={"app": "prometheus"})],
             ),
             Namespace(
                 name="robot-shop",
-                pods=[
-                    Pod(
-                        name="cart-123",
-                        labels={"service": "cart"}
-                    )
-                ],
+                pods=[Pod(name="cart-123", labels={"service": "cart"})],
             ),
         ]
     )

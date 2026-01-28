@@ -7,6 +7,7 @@ from krkn_ai.models.cluster_components import ClusterComponents
 from krkn_ai.utils import id_generator
 from krkn_ai.models.safety import SafetyConfig
 
+
 class PodScenarioConfig(BaseModel):
     enable: bool = False
 

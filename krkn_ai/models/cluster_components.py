@@ -7,6 +7,7 @@ from krkn_ai.models.safety import SafetyConfig
 
 logger = get_logger(__name__)
 
+
 def safe_regex_match(pattern: str, value: str) -> bool:
     """
     Safely evaluate regex patterns from user config.
@@ -121,7 +122,9 @@ class ClusterComponents(BaseModel):
             for pattern in safety.excluded_namespaces:
                 if fnmatch.fnmatch(namespace.name, pattern):
                     namespace.disabled = True
-                    logger.info("Protected namespace excluded from chaos: %s", namespace.name)
+                    logger.info(
+                        "Protected namespace excluded from chaos: %s", namespace.name
+                    )
                     break
 
             # skip pod-level checks if namespace disabled
@@ -136,18 +139,14 @@ class ClusterComponents(BaseModel):
                         key, value = label.split("=", 1)
                         if pod.labels.get(key) == value:
                             pod.disabled = True
-                            logger.debug(
-                                "Protected pod by label: %s", pod.name
-                            )
+                            logger.debug("Protected pod by label: %s", pod.name)
                             break
 
                 # name pattern exclusion
                 for pattern in safety.excluded_pod_name_patterns:
                     if safe_regex_match(pattern, pod.name):
                         pod.disabled = True
-                        logger.debug(
-                            "Protected pod by pattern: %s", pod.name
-                        )
+                        logger.debug("Protected pod by pattern: %s", pod.name)
                         break
 
         # nodes
