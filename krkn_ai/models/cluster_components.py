@@ -7,6 +7,22 @@ from krkn_ai.models.safety import SafetyConfig
 
 logger = get_logger(__name__)
 
+def safe_regex_match(pattern: str, value: str) -> bool:
+    """
+    Safely evaluate regex patterns from user config.
+    Prevents crashes and avoids invalid regex execution.
+    """
+    try:
+        return re.search(pattern, value) is not None
+    except re.error as exc:
+        logger.warning(
+            "Invalid regex pattern '%s' skipped: %s",
+            pattern,
+            exc,
+        )
+        return False
+
+
 class Container(BaseModel):
     name: str
     disabled: bool = False
@@ -105,7 +121,7 @@ class ClusterComponents(BaseModel):
             for pattern in safety.excluded_namespaces:
                 if fnmatch.fnmatch(namespace.name, pattern):
                     namespace.disabled = True
-                    logger.info(f"🛡️  Protected namespace: {namespace.name}")
+                    logger.info("Protected namespace excluded from chaos: %s", namespace.name)
                     break
 
             # skip pod-level checks if namespace disabled
@@ -121,16 +137,16 @@ class ClusterComponents(BaseModel):
                         if pod.labels.get(key) == value:
                             pod.disabled = True
                             logger.debug(
-                                f"🛡️  Protected pod by label: {pod.name}"
+                                "Protected pod by label: %s", pod.name
                             )
                             break
 
                 # name pattern exclusion
                 for pattern in safety.excluded_pod_name_patterns:
-                    if re.match(pattern, pod.name):
+                    if safe_regex_match(pattern, pod.name):
                         pod.disabled = True
                         logger.debug(
-                            f"🛡️  Protected pod by pattern: {pod.name}"
+                            "Protected pod by pattern: %s", pod.name
                         )
                         break
 
@@ -139,6 +155,5 @@ class ClusterComponents(BaseModel):
             for label in safety.excluded_node_labels:
                 if label in node.labels:
                     node.disabled = True
-                    logger.info(f"🛡️  Protected node: {node.name}")
+                    logger.info("Protected node: %s", node.name)
                     break
-

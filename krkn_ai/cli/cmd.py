@@ -83,10 +83,6 @@ def run(
         parsed_config.cluster_components = (
             parsed_config.cluster_components.get_active_components()
         )
-        # 🔍 DEBUG: verify safety worked
-        logger.info("Remaining namespaces after safety:")
-        for ns in parsed_config.cluster_components.namespaces:
-            logger.info(" - %s", ns.name)
     except KeyError as err:
         logger.error("Unable to parse config file due to missing key: %s", err)
         exit(1)
