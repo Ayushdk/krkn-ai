@@ -5,6 +5,7 @@ from krkn_lib.prometheus.krkn_prometheus import KrknPrometheus
 from krkn_ai.utils.fs import env_is_truthy
 from krkn_ai.utils.logger import get_logger
 from krkn_ai.models.custom_errors import PrometheusConnectionError
+from typing import Optional
 
 logger = get_logger(__name__)
 
@@ -149,6 +150,7 @@ def _discover_openshift_prometheus_token(kubeconfig: str) -> str:
         logger.debug(f"Unexpected error during token discovery: {e}")
         return ""
 
+
 def _validate_and_create_client(url: str, token: str) -> KrknPrometheus:
     """
     Validates connection parameters and initializes the Prometheus client.
@@ -172,8 +174,8 @@ def _validate_and_create_client(url: str, token: str) -> KrknPrometheus:
         return client
 
     max_retries = 4
-    base_delay = 1 # seconds
-    last_error: Exception | None = None
+    base_delay = 1  # seconds
+    last_error: Optional[Exception] = None
 
     for attempt in range(1, max_retries + 1):
         try:
