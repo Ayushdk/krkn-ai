@@ -1,4 +1,5 @@
 import os
+import time
 from kubernetes import client, config
 from krkn_lib.prometheus.krkn_prometheus import KrknPrometheus
 from krkn_ai.utils.fs import env_is_truthy
@@ -52,6 +53,11 @@ def create_prometheus_client(kubeconfig: str) -> KrknPrometheus:
     Raises:
         PrometheusConnectionError: If Prometheus cannot be discovered or accessed.
     """
+
+    if env_is_truthy("MOCK_FITNESS"):
+        logger.info("MOCK_FITNESS enabled — skipping Prometheus discovery")
+        return KrknPrometheus("mock://prometheus", "mock")
+
     url = os.getenv("PROMETHEUS_URL", "").strip()
     token = os.getenv("PROMETHEUS_TOKEN", "").strip()
 
@@ -143,36 +149,58 @@ def _discover_openshift_prometheus_token(kubeconfig: str) -> str:
         logger.debug(f"Unexpected error during token discovery: {e}")
         return ""
 
-
 def _validate_and_create_client(url: str, token: str) -> KrknPrometheus:
     """
     Validates connection parameters and initializes the Prometheus client.
-
     Args:
         url: The Prometheus API endpoint URL.
         token: Authentication token.
-
     Returns:
         An initialized KrknPrometheus client.
-
     Raises:
         PrometheusConnectionError: If the connection test fails.
     """
-    # Ensure URL has a protocol scheme
+
     if not url.startswith(("http://", "https://")):
         url = f"https://{url}"
 
     logger.debug("Initializing Prometheus client: %s", url)
 
-    try:
-        client = KrknPrometheus(url.strip(), token.strip())
-        # Connection test: run a dummy query unless in mock mode
-        if not env_is_truthy("MOCK_FITNESS"):
-            client.process_query("1")
+    client = KrknPrometheus(url.strip(), token.strip())
+
+    if env_is_truthy("MOCK_FITNESS"):
         return client
-    except Exception as e:
-        raise PrometheusConnectionError(
-            f"Failed to connect to Prometheus at {url}.\n"
-            f"Error details: {str(e)}\n\n"
-            "Check network connectivity and ensure the token is valid."
-        )
+
+    max_retries = 4
+    base_delay = 1 # seconds
+    last_error: Exception | None = None
+
+    for attempt in range(1, max_retries + 1):
+        try:
+            logger.debug(
+                "Testing Prometheus connectivity (attempt %s/%s)",
+                attempt,
+                max_retries,
+            )
+            client.process_query("1")
+            return client
+
+        except Exception as exc:
+            last_error = exc
+
+            if attempt < max_retries:
+                delay = base_delay * (2 ** (attempt - 1))
+                logger.warning(
+                    "Prometheus connection attempt %s failed: %s. Retrying in %ss",
+                    attempt,
+                    exc,
+                    delay,
+                )
+                time.sleep(delay)
+
+    raise PrometheusConnectionError(
+        f"Failed to connect to Prometheus at {url} after {max_retries} attempts.\n"
+        f"Last error: {last_error}\n\n"
+        "Prometheus may be temporarily unavailable during chaos experiments.\n"
+        "Verify network connectivity and authentication token."
+    )
