@@ -32,7 +32,7 @@ class RNG:
     def randint(self, low: int, high: int):
         if low == high:
             return low
-        return self.rng.integers(low, high)
+        return int(self.rng.integers(low, high))
 
     def uniform(self, low: float, high: float):
         return self.rng.uniform(low, high)
