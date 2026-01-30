@@ -1,11 +1,9 @@
 import os
-import time
 from kubernetes import client, config
 from krkn_lib.prometheus.krkn_prometheus import KrknPrometheus
 from krkn_ai.utils.fs import env_is_truthy
 from krkn_ai.utils.logger import get_logger
 from krkn_ai.models.custom_errors import PrometheusConnectionError
-from typing import Optional
 from krkn_ai.utils.retry import retry_with_backoff
 
 logger = get_logger(__name__)
@@ -161,9 +159,7 @@ def _validate_and_create_client(url: str, token: str) -> KrknPrometheus:
         return client
 
     def validate_connection():
-        logger.debug("Testing Prometheus connectivity")
         client.process_query("1")
-        logger.debug("✓ Prometheus connection validated successfully")
         return client
 
     try:
@@ -171,13 +167,9 @@ def _validate_and_create_client(url: str, token: str) -> KrknPrometheus:
             func=validate_connection,
             retries=4,
             base_delay=1,
-            exponential=True,
-            on_exception=lambda exc, attempt: logger.warning(
-                "Prometheus connection attempt %s failed: %s",
-                attempt,
-                exc,
-            ),
+            operation_name="Prometheus connectivity check",
         )
+
     except Exception as exc:
         raise PrometheusConnectionError(
             f"Failed to connect to Prometheus at {url} after 4 attempts.\n"
