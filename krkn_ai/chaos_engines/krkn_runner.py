@@ -378,7 +378,6 @@ class KrknRunner:
             result["depends_on"] = depends_on
         return result
 
-    
     def calculate_fitness_value(self, start, end, query, fitness_type):
         """Calculate fitness score for scenario run"""
 

@@ -23,11 +23,7 @@ def retry_with_backoff(
                 on_exception(exc, attempt)
 
             if attempt < retries:
-                delay = (
-                    base_delay * (2 ** (attempt - 1))
-                    if exponential
-                    else base_delay
-                )
+                delay = base_delay * (2 ** (attempt - 1)) if exponential else base_delay
                 time.sleep(delay)
 
     raise last_error
