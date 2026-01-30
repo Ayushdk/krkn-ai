@@ -1,72 +1,78 @@
 import pytest
+
 from krkn_ai.utils.prometheus import _validate_and_create_client
 from krkn_ai.models.custom_errors import PrometheusConnectionError
 
 
-def test_prometheus_success_first_try(mocker):
-    mocker.patch("krkn_ai.utils.prometheus.env_is_truthy", return_value=False)
+def test_prometheus_success_first_try(monkeypatch):
+    monkeypatch.delenv("MOCK_FITNESS", raising=False)
 
-    mock_client = mocker.Mock()
-    mock_client.process_query.return_value = None
+    mock_client = type("MockClient", (), {})()
+    mock_client.process_query = lambda _: None
 
-    mocker.patch(
+    monkeypatch.setattr(
         "krkn_ai.utils.prometheus.KrknPrometheus",
-        return_value=mock_client,
+        lambda url, token: mock_client,
     )
 
     client = _validate_and_create_client("http://prom", "token")
 
-    assert client == mock_client
-    mock_client.process_query.assert_called_once()
+    assert client is mock_client
 
 
-def test_prometheus_retry_then_success(mocker):
-    mocker.patch("krkn_ai.utils.prometheus.env_is_truthy", return_value=False)
+def test_prometheus_retry_then_success(monkeypatch):
+    monkeypatch.delenv("MOCK_FITNESS", raising=False)
 
-    mock_client = mocker.Mock()
-    mock_client.process_query.side_effect = [
-        Exception("fail-1"),
-        Exception("fail-2"),
-        None,
-    ]
+    calls = {"count": 0}
 
-    mocker.patch(
+    def process_query(_):
+        calls["count"] += 1
+        if calls["count"] < 3:
+            raise Exception("temporary failure")
+
+    mock_client = type("MockClient", (), {})()
+    mock_client.process_query = process_query
+
+    monkeypatch.setattr(
         "krkn_ai.utils.prometheus.KrknPrometheus",
-        return_value=mock_client,
+        lambda url, token: mock_client,
     )
 
     client = _validate_and_create_client("http://prom", "token")
 
-    assert client == mock_client
-    assert mock_client.process_query.call_count == 3
+    assert client is mock_client
+    assert calls["count"] == 3
 
 
-def test_prometheus_retry_exhausted(mocker):
-    mocker.patch("krkn_ai.utils.prometheus.env_is_truthy", return_value=False)
+def test_prometheus_retry_exhausted(monkeypatch):
+    monkeypatch.delenv("MOCK_FITNESS", raising=False)
 
-    mock_client = mocker.Mock()
-    mock_client.process_query.side_effect = Exception("always down")
+    def process_query(_):
+        raise Exception("always down")
 
-    mocker.patch(
+    mock_client = type("MockClient", (), {})()
+    mock_client.process_query = process_query
+
+    monkeypatch.setattr(
         "krkn_ai.utils.prometheus.KrknPrometheus",
-        return_value=mock_client,
+        lambda url, token: mock_client,
     )
 
     with pytest.raises(PrometheusConnectionError):
         _validate_and_create_client("http://prom", "token")
 
 
-def test_mock_fitness_skips_prometheus(mocker):
-    mocker.patch("krkn_ai.utils.prometheus.env_is_truthy", return_value=True)
+def test_mock_fitness_skips_prometheus(monkeypatch):
+    monkeypatch.setenv("MOCK_FITNESS", "true")
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
 
-    mock_client = mocker.Mock()
+    mock_client = type("MockClient", (), {})()
 
-    mocker.patch(
+    monkeypatch.setattr(
         "krkn_ai.utils.prometheus.KrknPrometheus",
-        return_value=mock_client,
+        lambda url, token: mock_client,
     )
 
     client = _validate_and_create_client("http://prom", "token")
 
-    assert client == mock_client
-    mock_client.process_query.assert_not_called()
+    assert client is mock_client

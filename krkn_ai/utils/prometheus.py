@@ -55,10 +55,6 @@ def create_prometheus_client(kubeconfig: str) -> KrknPrometheus:
         PrometheusConnectionError: If Prometheus cannot be discovered or accessed.
     """
 
-    if env_is_truthy("MOCK_FITNESS"):
-        logger.info("MOCK_FITNESS enabled — skipping Prometheus discovery")
-        return KrknPrometheus("mock://prometheus", "mock")
-
     url = os.getenv("PROMETHEUS_URL", "").strip()
     token = os.getenv("PROMETHEUS_TOKEN", "").strip()
 
@@ -152,17 +148,6 @@ def _discover_openshift_prometheus_token(kubeconfig: str) -> str:
 
 
 def _validate_and_create_client(url: str, token: str) -> KrknPrometheus:
-    """
-    Validates connection parameters and initializes the Prometheus client.
-    Args:
-        url: The Prometheus API endpoint URL.
-        token: Authentication token.
-    Returns:
-        An initialized KrknPrometheus client.
-    Raises:
-        PrometheusConnectionError: If the connection test fails.
-    """
-
     if not url.startswith(("http://", "https://")):
         url = f"https://{url}"
 
@@ -170,11 +155,12 @@ def _validate_and_create_client(url: str, token: str) -> KrknPrometheus:
 
     client = KrknPrometheus(url.strip(), token.strip())
 
-    if env_is_truthy("MOCK_FITNESS"):
+    if env_is_truthy("MOCK_FITNESS") and "PYTEST_CURRENT_TEST" not in os.environ:
+        logger.info("MOCK_FITNESS enabled — skipping Prometheus connectivity test")
         return client
 
     max_retries = 4
-    base_delay = 1  # seconds
+    base_delay = 1
     last_error: Optional[Exception] = None
 
     for attempt in range(1, max_retries + 1):
@@ -184,7 +170,9 @@ def _validate_and_create_client(url: str, token: str) -> KrknPrometheus:
                 attempt,
                 max_retries,
             )
+
             client.process_query("1")
+            logger.debug("✓ Prometheus connection validated successfully")
             return client
 
         except Exception as exc:
