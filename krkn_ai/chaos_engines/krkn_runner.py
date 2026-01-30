@@ -4,6 +4,7 @@ import datetime
 import tempfile
 import time
 from typing import Optional, Tuple
+import krkn_ai.utils.retry as retry_with_backoff
 
 from krkn_ai.chaos_engines.health_check_watcher import HealthCheckWatcher
 from krkn_ai.models.app import (
@@ -377,30 +378,37 @@ class KrknRunner:
             result["depends_on"] = depends_on
         return result
 
+    
     def calculate_fitness_value(self, start, end, query, fitness_type):
         """Calculate fitness score for scenario run"""
+
         if env_is_truthy("MOCK_FITNESS"):
             return rng.random()
 
-        # Retry to calculate fitness function if it fails
-        # Case when data isn't available in prometheus for latest time range
-        retries = 3  # Number of retries to calculate fitness function
-        retry_delay = 10  # in seconds
-        for retry in range(retries):
-            try:
-                if fitness_type == FitnessFunctionType.point:
-                    return self.calculate_point_fitness(start, end, query)
-                elif fitness_type == FitnessFunctionType.range:
-                    return self.calculate_range_fitness(start, end, query)
-            except Exception as error:
-                logger.error(f"Fitness function calculation failed: {error}")
-                logger.info(
-                    f"Retrying fitness function calculation... (retry {retry + 1} of {retries})"
-                )
-                time.sleep(retry_delay)
-        raise FitnessFunctionCalculationError(
-            f"Fitness function calculation failed after {retries} retries"
-        )
+        def calculate():
+            if fitness_type == FitnessFunctionType.point:
+                return self.calculate_point_fitness(start, end, query)
+            elif fitness_type == FitnessFunctionType.range:
+                return self.calculate_range_fitness(start, end, query)
+            else:
+                raise ValueError(f"Unsupported fitness type: {fitness_type}")
+
+        try:
+            return retry_with_backoff(
+                func=calculate,
+                retries=3,
+                base_delay=10,
+                exponential=False,
+                on_exception=lambda exc, attempt: logger.error(
+                    "Fitness function calculation failed (attempt %s): %s",
+                    attempt,
+                    exc,
+                ),
+            )
+        except Exception:
+            raise FitnessFunctionCalculationError(
+                "Fitness function calculation failed after 3 retries"
+            )
 
     def calculate_fitness_score_for_items(self, start, end):
         """

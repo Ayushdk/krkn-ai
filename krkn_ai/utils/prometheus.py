@@ -6,6 +6,7 @@ from krkn_ai.utils.fs import env_is_truthy
 from krkn_ai.utils.logger import get_logger
 from krkn_ai.models.custom_errors import PrometheusConnectionError
 from typing import Optional
+from krkn_ai.utils.retry import retry_with_backoff
 
 logger = get_logger(__name__)
 
@@ -159,38 +160,28 @@ def _validate_and_create_client(url: str, token: str) -> KrknPrometheus:
         logger.info("MOCK_FITNESS enabled — skipping Prometheus connectivity test")
         return client
 
-    max_retries = 4
-    base_delay = 1
-    last_error: Optional[Exception] = None
+    def validate_connection():
+        logger.debug("Testing Prometheus connectivity")
+        client.process_query("1")
+        logger.debug("✓ Prometheus connection validated successfully")
+        return client
 
-    for attempt in range(1, max_retries + 1):
-        try:
-            logger.debug(
-                "Testing Prometheus connectivity (attempt %s/%s)",
+    try:
+        return retry_with_backoff(
+            func=validate_connection,
+            retries=4,
+            base_delay=1,
+            exponential=True,
+            on_exception=lambda exc, attempt: logger.warning(
+                "Prometheus connection attempt %s failed: %s",
                 attempt,
-                max_retries,
-            )
-
-            client.process_query("1")
-            logger.debug("✓ Prometheus connection validated successfully")
-            return client
-
-        except Exception as exc:
-            last_error = exc
-
-            if attempt < max_retries:
-                delay = base_delay * (2 ** (attempt - 1))
-                logger.warning(
-                    "Prometheus connection attempt %s failed: %s. Retrying in %ss",
-                    attempt,
-                    exc,
-                    delay,
-                )
-                time.sleep(delay)
-
-    raise PrometheusConnectionError(
-        f"Failed to connect to Prometheus at {url} after {max_retries} attempts.\n"
-        f"Last error: {last_error}\n\n"
-        "Prometheus may be temporarily unavailable during chaos experiments.\n"
-        "Verify network connectivity and authentication token."
-    )
+                exc,
+            ),
+        )
+    except Exception as exc:
+        raise PrometheusConnectionError(
+            f"Failed to connect to Prometheus at {url} after 4 attempts.\n"
+            f"Last error: {exc}\n\n"
+            "Prometheus may be temporarily unavailable during chaos experiments.\n"
+            "Verify network connectivity and authentication token."
+        )
