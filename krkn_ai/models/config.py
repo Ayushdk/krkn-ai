@@ -212,12 +212,19 @@ class StoppingCriteria(BaseModel):
     exploration_saturation: Optional[int] = (
         None  # Stop if no new scenarios for N generations
     )
+    saturation_threshold: float = (
+        0.0001  # Minimum improvement threshold for generation saturation
+    )
 
     @field_validator("generation_saturation", "exploration_saturation", mode="after")
     @classmethod
-    def validate_positive_int(cls, value: Optional[int]) -> Optional[int]:
+    def validate_positive_int(cls, value: Optional[int], info) -> Optional[int]:
         if value is not None and value <= 0:
-            raise ValueError("Value must be a positive integer greater than 0")
+            field_name = info.field_name
+            raise ValueError(
+                f"{field_name} must be a positive integer greater than 0. "
+                f"Please check the '{field_name}' parameter in your krkn-ai config file."
+            )
         return value
 
 
@@ -247,8 +254,8 @@ class ConfigFile(BaseModel):
         const.CROSSOVER_RATE
     )  # How often crossover should occur for each scenario parameter (0.0-1.0)
     composition_rate: float = (
-        const.CROSSOVER_COMPOSITION_RATE
-    )  # How often a crossover would lead to composition (0.0-1.0)
+        0  # How often a crossover would lead to composition (0.0-1.0)
+    )
 
     population_injection_rate: float = (
         const.POPULATION_INJECTION_RATE

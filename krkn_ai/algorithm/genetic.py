@@ -165,18 +165,12 @@ class GeneticAlgorithm:
             self.update_saturation_tracking()
             self.update_exploration_tracking()
 
+            # Increment generation counter after evaluation
+            cur_generation += 1
+
             # Check stopping criteria after fitness evaluation (for fitness threshold, saturation, and exploration)
             elapsed_after_eval = time.time() - start_time
-            should_stop, reason = self.should_stop(
-                cur_generation + 1, elapsed_after_eval
-            )
-            if should_stop:
-                logger.info("Stopping algorithm: %s", reason)
-                logger.info(
-                    "Completed %d generations in %s",
-                    cur_generation + 1,
-                    format_duration(elapsed_after_eval),
-                )
+            if self._check_and_stop(cur_generation, elapsed_after_eval):
                 break
 
             # Repopulate off-springs
@@ -213,8 +207,6 @@ class GeneticAlgorithm:
                 self.population.extend(
                     self.create_population(self.config.population_injection_size)
                 )
-
-            cur_generation += 1
 
     def adapt_mutation_rate(self):
         cfg = self.config.adaptive_mutation
@@ -254,6 +246,28 @@ class GeneticAlgorithm:
         )
 
         self.stagnant_generations = 0
+
+    def _check_and_stop(self, cur_generation: int, elapsed_time: float) -> bool:
+        """
+        Helper method to check stopping criteria and log if stopping.
+
+        Args:
+            cur_generation: Current generation number
+            elapsed_time: Time elapsed since algorithm start (in seconds)
+
+        Returns:
+            True if algorithm should stop, False otherwise
+        """
+        should_stop, reason = self.should_stop(cur_generation, elapsed_time)
+        if should_stop:
+            logger.info("Stopping algorithm: %s", reason)
+            logger.info(
+                "Completed %d generations in %s",
+                cur_generation,
+                format_duration(elapsed_time),
+            )
+            return True
+        return False
 
     def should_stop(self, cur_generation: int, elapsed_time: float) -> Tuple[bool, str]:
         """
@@ -378,7 +392,8 @@ class GeneticAlgorithm:
         curr_best = self.best_of_generation[-1].fitness_result.fitness_score
 
         improvement = curr_best - prev_best
-        if improvement <= 0.0001:  # No significant improvement
+        threshold = self.config.stopping_criteria.saturation_threshold
+        if improvement <= threshold:  # No significant improvement
             self.saturation_stagnant_generations += 1
             logger.debug(
                 "No improvement in fitness score | stagnant_generations=%d/%s",
