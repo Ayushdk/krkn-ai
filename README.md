@@ -91,6 +91,9 @@ uv run krkn_ai discover -k ./tmp/kubeconfig.yaml \
 # Path to your kubeconfig file
 kubeconfig_file_path: "./tmp/kubeconfig.yaml"
 
+# Optional: Random seed for reproducible runs
+# seed: 42
+
 # Genetic algorithm parameters
 generations: 5
 population_size: 10
