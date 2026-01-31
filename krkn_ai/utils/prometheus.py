@@ -154,7 +154,7 @@ def _validate_and_create_client(url: str, token: str) -> KrknPrometheus:
 
     client = KrknPrometheus(url.strip(), token.strip())
 
-    if env_is_truthy("MOCK_FITNESS") and "PYTEST_CURRENT_TEST" not in os.environ:
+    if env_is_truthy("MOCK_FITNESS"):
         logger.info("MOCK_FITNESS enabled — skipping Prometheus connectivity test")
         return client
 
