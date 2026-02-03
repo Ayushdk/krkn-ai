@@ -37,5 +37,13 @@ class RNG:
     def uniform(self, low: float, high: float):
         return self.rng.uniform(low, high)
 
+    def get_state(self):
+        """Get current RNG state for checkpointing."""
+        return self.rng.getstate()
+
+    def set_state(self, state):
+        """Restore RNG state from checkpoint."""
+        self.rng.setstate(state)
+
 
 rng = RNG()

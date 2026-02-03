@@ -59,6 +59,18 @@ def main():
     help="Random seed for reproducible runs. Overrides seed in config file.",
     default=None,
 )
+@click.option(
+    "--resume",
+    is_flag=True,
+    help="Resume from previous checkpoint. Continues execution from the last saved generation.",
+    default=False,
+)
+@click.option(
+    "--checkpoint",
+    type=click.Path(exists=True),
+    help="Path to custom checkpoint file. Use with --resume to specify a specific checkpoint.",
+    default=None,
+)
 @click.option("-v", "--verbose", count=True, help="Increase verbosity of output.")
 @click.pass_context
 def run(
@@ -70,11 +82,14 @@ def run(
     runner_type: str = None,
     param: list[str] = None,
     seed: int = None,
-    verbose: int = 0,  # Default to INFO level
+    resume: bool = False,  # NEW
+    checkpoint: str = None,  # NEW
+    verbose: int = 0,
 ):
     init_logger(output, verbose >= 2)
     logger = get_logger(__name__)
 
+    # Validate config file
     if config == "" or config is None:
         logger.error("Config file invalid.")
         exit(1)
@@ -82,6 +97,38 @@ def run(
         logger.error("Config file not found.")
         exit(1)
 
+    # Validate resume/checkpoint options
+    if resume:
+        checkpoint_file = checkpoint or os.path.join(output, "checkpoint.json")
+
+        if not os.path.exists(checkpoint_file):
+            logger.error(
+                "Cannot resume: checkpoint file not found at '%s'", checkpoint_file
+            )
+            logger.info("Available options:")
+            logger.info("  1. Run without --resume to start a fresh experiment")
+            logger.info("  2. Specify a different checkpoint with --checkpoint PATH")
+            exit(1)
+
+        logger.info("Resume mode enabled")
+        logger.info("Checkpoint file: %s", checkpoint_file)
+
+        # Warn if seed is provided when resuming
+        if seed is not None:
+            logger.warning(
+                "Seed parameter ignored when resuming from checkpoint. "
+                "Using seed from checkpoint."
+            )
+
+    elif checkpoint is not None:
+        # User specified --checkpoint without --resume
+        logger.warning(
+            "--checkpoint option requires --resume flag. "
+            "Add --resume to resume from the specified checkpoint."
+        )
+        exit(1)
+
+    # Parse configuration
     try:
         parsed_config = read_config_from_file(config, param, kubeconfig)
         logger.info("Initialized config: %s", config)
@@ -92,9 +139,10 @@ def run(
         logger.error("Unable to parse config file: %s", err)
         exit(1)
 
-    # Override seed from CLI if provided
-    if seed is not None:
+    # Override seed from CLI if provided (only for fresh runs)
+    if seed is not None and not resume:
         parsed_config.seed = seed
+        logger.info("Using seed from command line: %d", seed)
 
     # Convert user-friendly string to enum if provided
     enum_runner_type = None
@@ -104,25 +152,50 @@ def run(
         elif runner_type.lower() == "krknhub":
             enum_runner_type = KrknRunnerType.HUB_RUNNER
 
+    # Run the genetic algorithm
     try:
         genetic = GeneticAlgorithm(
             parsed_config,
             output_dir=output,
             format=format,
             runner_type=enum_runner_type,
+            resume=resume,  # NEW
+            checkpoint_path=checkpoint,  # NEW
         )
-        genetic.simulate()
 
+        genetic.simulate()
         genetic.save()
+
+        logger.info("✓ Krkn-AI completed successfully")
+
+    except KeyboardInterrupt:
+        logger.warning("\n⚠ Execution interrupted by user")
+        logger.info("Progress has been saved to checkpoint")
+        logger.info("Resume with: krkn_ai run -c %s -o %s --resume", config, output)
+        exit(130)  # Standard exit code for Ctrl+C
+
     except (MissingScenarioError, PrometheusConnectionError, UniqueScenariosError) as e:
         logger.error("%s", e)
         exit(1)
+
     except FitnessFunctionCalculationError as e:
         logger.error("Unable to calculate fitness function score: %s", e)
         exit(1)
+
+    except FileNotFoundError as e:
+        if "checkpoint" in str(e).lower():
+            logger.error("Checkpoint error: %s", e)
+            logger.info("Run without --resume to start a fresh experiment")
+        else:
+            logger.error("File not found: %s", e)
+        exit(1)
+
     except Exception as e:
         logger.exception("Something went wrong: %s", e)
+        logger.info("If execution was interrupted, you can resume with:")
+        logger.info("  krkn_ai run -c %s -o %s --resume", config, output)
         exit(1)
+
     finally:
         logger.info("Check run.log file in '%s' for more details.", output)
 

@@ -43,6 +43,8 @@ class GeneticAlgorithm:
         output_dir: str,
         format: str,
         runner_type: KrknRunnerType = None,
+        resume: bool = False,
+        checkpoint_path: Optional[str] = None,
     ):
         self.output_dir = output_dir
         self.config = config
@@ -74,9 +76,8 @@ class GeneticAlgorithm:
         self.valid_scenarios = ScenarioFactory.generate_valid_scenarios(
             self.config
         )  # List valid scenarios
-        self.seen_population: Dict[
-            BaseScenario, CommandRunResult
-        ] = {}  # Map between scenario and its result
+        self.seen_population: Dict[str, CommandRunResult] = {}
+
         self.best_of_generation: List[BaseScenario] = []
 
         self.health_check_reporter = HealthCheckReporter(
@@ -117,14 +118,383 @@ class GeneticAlgorithm:
         # logger.debug("--------------------------------------------------------")
         # logger.debug("%s", json.dumps(self.config.model_dump(), indent=2))
 
-    def simulate(self):
-        # Initial population (Gen 0)
-        self.population = self.create_population(self.config.population_size)
+        # Checkpoint management
+        self.resume = resume
+        self.checkpoint_path = checkpoint_path
+        self.checkpoint_file = os.path.join(self.output_dir, "checkpoint.json")
 
-        # Variables to track the progress of the algorithm
-        self.start_time = datetime.datetime.now(datetime.timezone.utc)
-        start_time = time.time()
-        cur_generation = 0
+        # If resuming, load checkpoint
+        if self.resume:
+            self._load_checkpoint()
+            logger.info(
+                "Resumed from checkpoint at generation %d", self.completed_generations
+            )
+        else:
+            # Fresh run - ensure checkpoint doesn't exist
+            if os.path.exists(self.checkpoint_file):
+                logger.warning("Existing checkpoint found, backing up...")
+                backup_path = f"{self.checkpoint_file}.backup"
+                os.rename(self.checkpoint_file, backup_path)
+
+    # ADD THESE METHODS AFTER __init__ (around line 120, before simulate())
+
+    def _save_checkpoint(self, generation: int):
+        """
+        Save current state to checkpoint file.
+
+        Args:
+            generation: Current generation number
+        """
+        checkpoint_data = {
+            "version": "1.0",
+            "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "generation": generation,
+            "completed_generations": generation,
+            "run_uuid": self.run_uuid,
+            "seed": self.config.seed,
+            # Serialize population
+            "population": self._serialize_scenarios(self.population),
+            # Serialize seen population (scenario -> result mapping)
+            "seen_population": {
+                self._scenario_to_key(scenario): result.model_dump(mode="json")
+                for scenario, result in self.seen_population.items()
+            },
+            # Serialize best of generation
+            "best_of_generation": [
+                result.model_dump(mode="json") for result in self.best_of_generation
+            ],
+            # Save RNG state for reproducibility
+            "rng_state": self._serialize_rng_state(),
+            # Save adaptive mutation state
+            "stagnant_generations": self.stagnant_generations,
+            "scenario_mutation_rate": self.config.scenario_mutation_rate,
+            # Metadata
+            "start_time": self.start_time.isoformat() if self.start_time else None,
+        }
+
+        # Write to temporary file first, then rename (atomic operation)
+        temp_file = f"{self.checkpoint_file}.tmp"
+        with open(temp_file, "w", encoding="utf-8") as f:
+            json.dump(checkpoint_data, f, indent=2)
+
+        # Atomic rename
+        os.replace(temp_file, self.checkpoint_file)
+
+        logger.debug("Checkpoint saved at generation %d", generation)
+
+    def _load_checkpoint(self):
+        """Load state from checkpoint file (simplified robust version)."""
+        checkpoint_path = self.checkpoint_path or self.checkpoint_file
+
+        if not os.path.exists(checkpoint_path):
+            raise FileNotFoundError(
+                f"Checkpoint file not found: {checkpoint_path}\n"
+                f"Cannot resume without a valid checkpoint."
+            )
+
+        logger.info("Loading checkpoint from: %s", checkpoint_path)
+
+        try:
+            with open(checkpoint_path, "r", encoding="utf-8") as f:
+                checkpoint_data = json.load(f)
+
+            # Restore generation info
+            self.completed_generations = checkpoint_data.get("completed_generations", 0)
+
+            # Restore RNG state
+            self._restore_rng_state(checkpoint_data.get("rng_state"))
+
+            # Restore population
+            logger.info("Restoring population...")
+            self.population = self._deserialize_scenarios(
+                checkpoint_data.get("population", [])
+            )
+            logger.info("Restored %d scenarios to population", len(self.population))
+
+            # seen_population will rebuild as scenarios run
+            # This is simpler and more robust than trying to restore the mapping
+            self.seen_population = {}
+
+            # Restore best of generation
+            logger.info("Restoring best of generation...")
+            self.best_of_generation = []
+            for result_data in checkpoint_data.get("best_of_generation", []):
+                try:
+                    # Parse datetime strings
+                    if "start_time" in result_data and isinstance(
+                        result_data["start_time"], str
+                    ):
+                        result_data["start_time"] = datetime.datetime.fromisoformat(
+                            result_data["start_time"]
+                        )
+                    if "end_time" in result_data and isinstance(
+                        result_data["end_time"], str
+                    ):
+                        result_data["end_time"] = datetime.datetime.fromisoformat(
+                            result_data["end_time"]
+                        )
+
+                    result = CommandRunResult(**result_data)
+                    self.best_of_generation.append(result)
+                except Exception as e:
+                    logger.warning("Could not restore generation result: %s", e)
+                    continue
+
+            logger.info("Restored %d generation results", len(self.best_of_generation))
+
+            # Restore adaptive mutation state
+            self.stagnant_generations = checkpoint_data.get("stagnant_generations", 0)
+            original_mutation_rate = self.config.scenario_mutation_rate
+            self.config.scenario_mutation_rate = checkpoint_data.get(
+                "scenario_mutation_rate", original_mutation_rate
+            )
+
+            # Restore metadata
+            if checkpoint_data.get("start_time"):
+                try:
+                    self.start_time = datetime.datetime.fromisoformat(
+                        checkpoint_data["start_time"]
+                    )
+                except (ValueError, TypeError):
+                    self.start_time = datetime.datetime.now(datetime.timezone.utc)
+
+            # NOTE:
+            # Population restore is best-effort.
+            # If scenarios cannot be safely deserialized,
+            # we fall back to regenerating a valid population
+            # to guarantee forward progress.
+
+            # --- Population recovery fallback ---
+            if not self.population:
+                logger.warning(
+                    "Restored population is empty. Rebuilding from valid base scenarios."
+                )
+
+                # Rebuild population from valid scenario generators
+                rebuilt_population = self.create_population(self.config.population_size)
+
+                if not rebuilt_population:
+                    raise RuntimeError(
+                        "Cannot resume run: failed to rebuild a valid population."
+                    )
+
+                self.population = rebuilt_population
+
+                logger.info(
+                    "Rebuilt population with %d scenarios",
+                    len(self.population),
+                )
+
+            logger.info(
+                "✓ Checkpoint loaded successfully: generation %d",
+                self.completed_generations,
+            )
+
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid checkpoint file (corrupted JSON): {e}") from e
+        except KeyError as e:
+            raise ValueError(f"Invalid checkpoint file (missing key): {e}") from e
+        except Exception as e:
+            logger.error("Checkpoint loading failed", exc_info=True)
+            raise RuntimeError(f"Failed to load checkpoint: {e}") from e
+
+    def _serialize_scenarios(
+        self, scenarios: List[BaseScenario]
+    ) -> List[Dict[str, Any]]:
+        """
+        Serialize scenarios to JSON-compatible dictionaries.
+
+        Args:
+            scenarios: List of scenario objects
+
+        Returns:
+            List of serialized scenarios
+        """
+        serialized = []
+
+        for scenario in scenarios:
+            try:
+                # Get the scenario data
+                if hasattr(scenario, "model_dump"):
+                    # Pydantic model
+                    scenario_dict = scenario.model_dump(mode="json")
+                elif hasattr(scenario, "__dict__"):
+                    # Regular class
+                    scenario_dict = {
+                        k: v
+                        for k, v in scenario.__dict__.items()
+                        if not k.startswith("_")
+                    }
+                else:
+                    logger.warning("Cannot serialize scenario: %s", scenario)
+                    continue
+
+                # CRITICAL: Add class metadata for deserialization
+                scenario_dict["__class__"] = scenario.__class__.__name__
+                scenario_dict["__module__"] = scenario.__class__.__module__
+
+                # Also store string representation for lookup
+                scenario_dict["__str__"] = str(scenario)
+
+                serialized.append(scenario_dict)
+
+            except Exception as e:
+                logger.error("Failed to serialize scenario %s: %s", scenario, e)
+                continue
+
+        return serialized
+
+    def _deserialize_scenarios(self, data: List[Dict[str, Any]]) -> List[BaseScenario]:
+        """
+        Deserialize scenarios from dictionaries.
+
+        Args:
+            data: List of serialized scenarios
+
+        Returns:
+            List of scenario objects
+        """
+        scenarios = []
+
+        for scenario_dict in data:
+            try:
+                # Make a copy to avoid modifying original
+                scenario_data = scenario_dict.copy()
+
+                # Extract class information
+                class_name = scenario_data.pop("__class__", None)
+                module_name = scenario_data.pop("__module__", None)
+                scenario_data.pop("__str__", None)  # Remove string representation
+
+                if not class_name or not module_name:
+                    logger.warning("Missing class information in scenario data")
+                    continue
+
+                # Import the class dynamically
+                import importlib
+
+                try:
+                    module = importlib.import_module(module_name)
+                    scenario_class = getattr(module, class_name)
+                except (ImportError, AttributeError) as e:
+                    logger.error(
+                        "Cannot import scenario class %s.%s: %s",
+                        module_name,
+                        class_name,
+                        e,
+                    )
+                    continue
+
+                # Recreate the scenario
+                # Try pydantic model_validate first
+                if hasattr(scenario_class, "model_validate"):
+                    scenario = scenario_class.model_validate(scenario_data)
+                else:
+                    # Fall back to direct instantiation
+                    scenario = scenario_class(**scenario_data)
+
+                if not hasattr(scenario, "parameters") or isinstance(
+                    scenario, BaseScenario
+                ):
+                    logger.warning(
+                        "Skipping invalid scenario during resume: %s",
+                        scenario,
+                    )
+                    continue
+
+                scenarios.append(scenario)
+
+            except Exception as e:
+                logger.error("Failed to deserialize scenario: %s", e)
+                continue
+
+        return scenarios
+
+    def _serialize_rng_state(self) -> Dict[str, Any]:
+        """Serialize RNG state - saves seed for reproducibility."""
+        return {
+            "seed": self.config.seed,
+            "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        }
+
+    def _restore_rng_state(self, state_data: Dict[str, Any]):
+        """Restore RNG state - reinitializes with saved seed."""
+        if not state_data:
+            logger.debug("No RNG state to restore")
+            return
+
+        seed = state_data.get("seed")
+        if seed is not None:
+            rng.set_seed(seed)
+            logger.debug("RNG reinitialized with seed: %s", seed)
+        else:
+            logger.warning("No seed in checkpoint, using current RNG state")
+
+    def _scenario_to_key(self, scenario: BaseScenario) -> str:
+        """
+        Convert scenario to a unique string key for checkpoint storage.
+
+        Args:
+            scenario: Scenario object
+
+        Returns:
+            Unique string key
+        """
+        # Use scenario's string representation as key
+        # You may want to implement a better hashing method
+        return str(scenario)
+
+    def _key_to_scenario(
+        self, key: str, population_data: List[Dict[str, Any]]
+    ) -> BaseScenario:
+        """
+        Convert string key back to scenario object.
+
+        Args:
+            key: Scenario key (string representation)
+            population_data: Serialized population data
+
+        Returns:
+            Scenario object matching the key
+        """
+        # Find scenario in population that matches the key
+        for scenario_dict in population_data:
+            # Check if stored string representation matches
+            if scenario_dict.get("__str__") == key:
+                # Deserialize this specific scenario
+                scenarios = self._deserialize_scenarios([scenario_dict])
+                if scenarios:
+                    return scenarios[0]
+
+        # If not found by __str__, try deserializing all and comparing
+        logger.debug("Trying fallback scenario lookup for key: %s", key)
+        all_scenarios = self._deserialize_scenarios(population_data)
+        for scenario in all_scenarios:
+            if str(scenario) == key:
+                return scenario
+
+        raise ValueError(f"Could not find scenario for key: {key}")
+
+    def _scenario_key(self, scenario: BaseScenario) -> str:
+        """
+        Stable, hash-free identifier for a scenario.
+        """
+        return str(scenario)
+
+    def simulate(self):
+        # If resuming, use existing population and start from next generation
+        if self.resume:
+            cur_generation = self.completed_generations + 1
+            start_time = time.time()
+            logger.info("Resuming from generation %d", cur_generation)
+        else:
+            # Fresh run - create initial population
+            self.population = self.create_population(self.config.population_size)
+
+            # Variables to track the progress of the algorithm
+            self.start_time = datetime.datetime.now(datetime.timezone.utc)
+            start_time = time.time()
+            cur_generation = 0
 
         while True:
             # Calculate elapsed time since the start of the algorithm
@@ -486,12 +856,13 @@ class GeneticAlgorithm:
     def calculate_fitness(self, scenario: BaseScenario, generation_id: int):
         # If scenario has already been run, do not run it again.
         # we will rely on mutation for the same parents to produce newer samples
-        if scenario in self.seen_population:
+        key = self._scenario_key(scenario)
+
+        if key in self.seen_population:
             logger.info(
                 "Scenario %s already evaluated, skipping fitness calculation.", scenario
             )
-            result = self.seen_population[scenario]
-            result = copy.deepcopy(result)
+            result = copy.deepcopy(self.seen_population[key])
             result.generation_id = generation_id
             return result
 
@@ -501,7 +872,7 @@ class GeneticAlgorithm:
         scenario_result = self.krkn_client.run(scenario, generation_id)
 
         # Add scenario to seen population
-        self.seen_population[scenario] = scenario_result
+        self.seen_population[key] = scenario_result
 
         # Save scenario result
         self.save_scenario_result(scenario_result)
