@@ -136,8 +136,6 @@ class GeneticAlgorithm:
                 backup_path = f"{self.checkpoint_file}.backup"
                 os.rename(self.checkpoint_file, backup_path)
 
-    # ADD THESE METHODS AFTER __init__ (around line 120, before simulate())
-
     def _save_checkpoint(self, generation: int):
         """
         Save current state to checkpoint file.
@@ -172,12 +170,10 @@ class GeneticAlgorithm:
             "start_time": self.start_time.isoformat() if self.start_time else None,
         }
 
-        # Write to temporary file first, then rename (atomic operation)
         temp_file = f"{self.checkpoint_file}.tmp"
         with open(temp_file, "w", encoding="utf-8") as f:
             json.dump(checkpoint_data, f, indent=2)
 
-        # Atomic rename
         os.replace(temp_file, self.checkpoint_file)
 
         logger.debug("Checkpoint saved at generation %d", generation)
@@ -211,8 +207,7 @@ class GeneticAlgorithm:
             )
             logger.info("Restored %d scenarios to population", len(self.population))
 
-            # seen_population will rebuild as scenarios run
-            # This is simpler and more robust than trying to restore the mapping
+            # Restore seen population
             self.seen_population = {}
 
             # Restore best of generation
@@ -264,7 +259,7 @@ class GeneticAlgorithm:
             # we fall back to regenerating a valid population
             # to guarantee forward progress.
 
-            # --- Population recovery fallback ---
+            # Population recovery fallback
             if not self.population:
                 logger.warning(
                     "Restored population is empty. Rebuilding from valid base scenarios."
@@ -286,7 +281,7 @@ class GeneticAlgorithm:
                 )
 
             logger.info(
-                "✓ Checkpoint loaded successfully: generation %d",
+                "Checkpoint loaded successfully: generation %d",
                 self.completed_generations,
             )
 
@@ -316,10 +311,8 @@ class GeneticAlgorithm:
             try:
                 # Get the scenario data
                 if hasattr(scenario, "model_dump"):
-                    # Pydantic model
                     scenario_dict = scenario.model_dump(mode="json")
                 elif hasattr(scenario, "__dict__"):
-                    # Regular class
                     scenario_dict = {
                         k: v
                         for k, v in scenario.__dict__.items()
@@ -329,11 +322,11 @@ class GeneticAlgorithm:
                     logger.warning("Cannot serialize scenario: %s", scenario)
                     continue
 
-                # CRITICAL: Add class metadata for deserialization
+                # CRITICAL: Adding class metadata for deserialization
                 scenario_dict["__class__"] = scenario.__class__.__name__
                 scenario_dict["__module__"] = scenario.__class__.__module__
 
-                # Also store string representation for lookup
+                # store string representation for lookup
                 scenario_dict["__str__"] = str(scenario)
 
                 serialized.append(scenario_dict)
@@ -358,10 +351,9 @@ class GeneticAlgorithm:
 
         for scenario_dict in data:
             try:
-                # Make a copy to avoid modifying original
+                # a copy to avoid modifying original
                 scenario_data = scenario_dict.copy()
 
-                # Extract class information
                 class_name = scenario_data.pop("__class__", None)
                 module_name = scenario_data.pop("__module__", None)
                 scenario_data.pop("__str__", None)  # Remove string representation
@@ -370,7 +362,6 @@ class GeneticAlgorithm:
                     logger.warning("Missing class information in scenario data")
                     continue
 
-                # Import the class dynamically
                 import importlib
 
                 try:
@@ -440,8 +431,7 @@ class GeneticAlgorithm:
         Returns:
             Unique string key
         """
-        # Use scenario's string representation as key
-        # You may want to implement a better hashing method
+        # use scenario's string representation as key
         return str(scenario)
 
     def _key_to_scenario(
@@ -457,16 +447,16 @@ class GeneticAlgorithm:
         Returns:
             Scenario object matching the key
         """
-        # Find scenario in population that matches the key
+        # find scenario in population that matches the key
         for scenario_dict in population_data:
-            # Check if stored string representation matches
+            # check if stored string representation matches
             if scenario_dict.get("__str__") == key:
-                # Deserialize this specific scenario
+                # deserialize this specific scenario
                 scenarios = self._deserialize_scenarios([scenario_dict])
                 if scenarios:
                     return scenarios[0]
 
-        # If not found by __str__, try deserializing all and comparing
+        # if not found by __str__, try deserializing all and comparing
         logger.debug("Trying fallback scenario lookup for key: %s", key)
         all_scenarios = self._deserialize_scenarios(population_data)
         for scenario in all_scenarios:

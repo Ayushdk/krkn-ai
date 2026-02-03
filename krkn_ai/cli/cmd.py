@@ -82,14 +82,13 @@ def run(
     runner_type: str = None,
     param: list[str] = None,
     seed: int = None,
-    resume: bool = False,  # NEW
-    checkpoint: str = None,  # NEW
+    resume: bool = False,
+    checkpoint: str = None,
     verbose: int = 0,
 ):
     init_logger(output, verbose >= 2)
     logger = get_logger(__name__)
 
-    # Validate config file
     if config == "" or config is None:
         logger.error("Config file invalid.")
         exit(1)
@@ -97,7 +96,6 @@ def run(
         logger.error("Config file not found.")
         exit(1)
 
-    # Validate resume/checkpoint options
     if resume:
         checkpoint_file = checkpoint or os.path.join(output, "checkpoint.json")
 
@@ -113,7 +111,6 @@ def run(
         logger.info("Resume mode enabled")
         logger.info("Checkpoint file: %s", checkpoint_file)
 
-        # Warn if seed is provided when resuming
         if seed is not None:
             logger.warning(
                 "Seed parameter ignored when resuming from checkpoint. "
@@ -121,14 +118,12 @@ def run(
             )
 
     elif checkpoint is not None:
-        # User specified --checkpoint without --resume
         logger.warning(
             "--checkpoint option requires --resume flag. "
             "Add --resume to resume from the specified checkpoint."
         )
         exit(1)
 
-    # Parse configuration
     try:
         parsed_config = read_config_from_file(config, param, kubeconfig)
         logger.info("Initialized config: %s", config)
@@ -139,12 +134,10 @@ def run(
         logger.error("Unable to parse config file: %s", err)
         exit(1)
 
-    # Override seed from CLI if provided (only for fresh runs)
     if seed is not None and not resume:
         parsed_config.seed = seed
         logger.info("Using seed from command line: %d", seed)
 
-    # Convert user-friendly string to enum if provided
     enum_runner_type = None
     if runner_type:
         if runner_type.lower() == "krknctl":
@@ -152,7 +145,6 @@ def run(
         elif runner_type.lower() == "krknhub":
             enum_runner_type = KrknRunnerType.HUB_RUNNER
 
-    # Run the genetic algorithm
     try:
         genetic = GeneticAlgorithm(
             parsed_config,
@@ -172,7 +164,7 @@ def run(
         logger.warning("\n⚠ Execution interrupted by user")
         logger.info("Progress has been saved to checkpoint")
         logger.info("Resume with: krkn_ai run -c %s -o %s --resume", config, output)
-        exit(130)  # Standard exit code for Ctrl+C
+        exit(130)
 
     except (MissingScenarioError, PrometheusConnectionError, UniqueScenariosError) as e:
         logger.error("%s", e)
