@@ -12,9 +12,10 @@ from krkn_ai.models.custom_errors import (
     PrometheusConnectionError,
     UniqueScenariosError,
 )
-from krkn_ai.utils.fs import read_config_from_file
+from krkn_ai.utils.fs import read_config_from_file, env_is_truthy
 from krkn_ai.templates.generator import create_krkn_ai_template
 from krkn_ai.utils.cluster_manager import ClusterManager
+from krkn_ai.utils.prometheus import create_prometheus_client
 
 
 @click.group(context_settings={"show_default": True})
@@ -145,20 +146,36 @@ def run(
         elif runner_type.lower() == "krknhub":
             enum_runner_type = KrknRunnerType.HUB_RUNNER
 
+    # Decide whether Prometheus should be initialized
+    prometheus_client = None
+
+    if env_is_truthy("MOCK_FITNESS"):
+        logger.warning(
+            "MOCK_FITNESS enabled — skipping Prometheus client initialization"
+        )
+    else:
+        try:
+            prometheus_client = create_prometheus_client(
+                parsed_config.kubeconfig_file_path
+            )
+        except PrometheusConnectionError:
+            raise
+
     try:
         genetic = GeneticAlgorithm(
             parsed_config,
             output_dir=output,
             format=format,
             runner_type=enum_runner_type,
-            resume=resume,  # NEW
-            checkpoint_path=checkpoint,  # NEW
+            resume=resume,
+            checkpoint_path=checkpoint,
+            prometheus_client=prometheus_client,
         )
 
         genetic.simulate()
         genetic.save()
 
-        logger.info("✓ Krkn-AI completed successfully")
+        logger.info("Krkn-AI completed successfully")
 
     except KeyboardInterrupt:
         logger.warning("\n⚠ Execution interrupted by user")

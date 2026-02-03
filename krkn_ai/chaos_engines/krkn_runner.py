@@ -52,7 +52,16 @@ class KrknRunner:
         runner_type: KrknRunnerType = None,
     ):
         self.config = config
-        self.prom_client = create_prometheus_client(self.config.kubeconfig_file_path)
+        if env_is_truthy("MOCK_FITNESS"):
+            logger.warning(
+                "MOCK_FITNESS enabled — skipping Prometheus client initialization"
+            )
+            self.prom_client = None
+        else:
+            self.prom_client = create_prometheus_client(
+                self.config.kubeconfig_file_path
+            )
+
         self.output_dir = output_dir
         if runner_type is None:
             self.runner_type = self.__check_runner_availability()
@@ -90,7 +99,28 @@ class KrknRunner:
     def run(self, scenario: BaseScenario, generation_id: int) -> CommandRunResult:
         logger.info("Running scenario: %s", scenario)
 
+        if not isinstance(scenario, (Scenario, CompositeScenario)):
+            raise NotImplementedError("Scenario unable to run")
+
         start_time = datetime.datetime.now()
+
+        if env_is_truthy("MOCK_FITNESS"):
+            logger.info("MOCK_FITNESS enabled — returning mock fitness result")
+
+            end_time = datetime.datetime.now()
+
+            return CommandRunResult(
+                generation_id=generation_id,
+                scenario=scenario,
+                cmd="MOCK_RUN",
+                log="MOCK_FITNESS enabled — Prometheus skipped",
+                returncode=0,
+                start_time=start_time,
+                end_time=end_time,
+                fitness_result=FitnessResult(fitness_score=rng.random()),
+                health_check_results={},
+                run_uuid=None,
+            )
 
         # Generate command krkn executor command
         log, returncode, run_uuid = None, None, None

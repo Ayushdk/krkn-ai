@@ -1,7 +1,6 @@
 import os
 from kubernetes import client, config
 from krkn_lib.prometheus.krkn_prometheus import KrknPrometheus
-from krkn_ai.utils.fs import env_is_truthy
 from krkn_ai.utils.logger import get_logger
 from krkn_ai.models.custom_errors import PrometheusConnectionError
 
@@ -145,20 +144,6 @@ def _discover_openshift_prometheus_token(kubeconfig: str) -> str:
 
 
 def _validate_and_create_client(url: str, token: str) -> KrknPrometheus:
-    """
-    Validates connection parameters and initializes the Prometheus client.
-
-    Args:
-        url: The Prometheus API endpoint URL.
-        token: Authentication token.
-
-    Returns:
-        An initialized KrknPrometheus client.
-
-    Raises:
-        PrometheusConnectionError: If the connection test fails.
-    """
-    # Ensure URL has a protocol scheme
     if not url.startswith(("http://", "https://")):
         url = f"https://{url}"
 
@@ -166,13 +151,11 @@ def _validate_and_create_client(url: str, token: str) -> KrknPrometheus:
 
     try:
         client = KrknPrometheus(url.strip(), token.strip())
-        # Connection test: run a dummy query unless in mock mode
-        if not env_is_truthy("MOCK_FITNESS"):
-            client.process_query("1")
+        client.process_query("1")
         return client
     except Exception as e:
         raise PrometheusConnectionError(
             f"Failed to connect to Prometheus at {url}.\n"
             f"Error details: {str(e)}\n\n"
             "Check network connectivity and ensure the token is valid."
-        )
+        ) from e

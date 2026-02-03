@@ -45,10 +45,12 @@ class GeneticAlgorithm:
         runner_type: KrknRunnerType = None,
         resume: bool = False,
         checkpoint_path: Optional[str] = None,
+        prometheus_client: Optional[Any] = None,
     ):
         self.output_dir = output_dir
         self.config = config
         self.format = format
+        self.prometheus_client = prometheus_client
 
         # Initialize RNG with seed for reproducibility
         rng.set_seed(self.config.seed)
@@ -76,7 +78,7 @@ class GeneticAlgorithm:
         self.valid_scenarios = ScenarioFactory.generate_valid_scenarios(
             self.config
         )  # List valid scenarios
-        self.seen_population: Dict[str, CommandRunResult] = {}
+        self.seen_population: Dict[BaseScenario, CommandRunResult] = {}
 
         self.best_of_generation: List[BaseScenario] = []
 
@@ -384,9 +386,7 @@ class GeneticAlgorithm:
                     # Fall back to direct instantiation
                     scenario = scenario_class(**scenario_data)
 
-                if not hasattr(scenario, "parameters") or isinstance(
-                    scenario, BaseScenario
-                ):
+                if not hasattr(scenario, "parameters"):
                     logger.warning(
                         "Skipping invalid scenario during resume: %s",
                         scenario,
@@ -432,43 +432,6 @@ class GeneticAlgorithm:
             Unique string key
         """
         # use scenario's string representation as key
-        return str(scenario)
-
-    def _key_to_scenario(
-        self, key: str, population_data: List[Dict[str, Any]]
-    ) -> BaseScenario:
-        """
-        Convert string key back to scenario object.
-
-        Args:
-            key: Scenario key (string representation)
-            population_data: Serialized population data
-
-        Returns:
-            Scenario object matching the key
-        """
-        # find scenario in population that matches the key
-        for scenario_dict in population_data:
-            # check if stored string representation matches
-            if scenario_dict.get("__str__") == key:
-                # deserialize this specific scenario
-                scenarios = self._deserialize_scenarios([scenario_dict])
-                if scenarios:
-                    return scenarios[0]
-
-        # if not found by __str__, try deserializing all and comparing
-        logger.debug("Trying fallback scenario lookup for key: %s", key)
-        all_scenarios = self._deserialize_scenarios(population_data)
-        for scenario in all_scenarios:
-            if str(scenario) == key:
-                return scenario
-
-        raise ValueError(f"Could not find scenario for key: {key}")
-
-    def _scenario_key(self, scenario: BaseScenario) -> str:
-        """
-        Stable, hash-free identifier for a scenario.
-        """
         return str(scenario)
 
     def simulate(self):
@@ -844,15 +807,11 @@ class GeneticAlgorithm:
         return population
 
     def calculate_fitness(self, scenario: BaseScenario, generation_id: int):
-        # If scenario has already been run, do not run it again.
-        # we will rely on mutation for the same parents to produce newer samples
-        key = self._scenario_key(scenario)
-
-        if key in self.seen_population:
+        if scenario in self.seen_population:
             logger.info(
                 "Scenario %s already evaluated, skipping fitness calculation.", scenario
             )
-            result = copy.deepcopy(self.seen_population[key])
+            result = copy.deepcopy(self.seen_population[scenario])
             result.generation_id = generation_id
             return result
 
@@ -861,13 +820,12 @@ class GeneticAlgorithm:
 
         scenario_result = self.krkn_client.run(scenario, generation_id)
 
-        # Add scenario to seen population
-        self.seen_population[key] = scenario_result
+        self.seen_population[scenario] = scenario_result
 
-        # Save scenario result
         self.save_scenario_result(scenario_result)
         self.health_check_reporter.plot_report(scenario_result)
         self.health_check_reporter.write_fitness_result(scenario_result)
+
         if self.elastic_client is not None:
             self.elastic_client.index_run_result(scenario_result, self.run_uuid)
 
@@ -1089,6 +1047,10 @@ class GeneticAlgorithm:
         return log_save_path
 
     def save_scenario_result(self, fitness_result: CommandRunResult):
+        if not isinstance(fitness_result, CommandRunResult):
+            logger.warning("Invalid fitness_result type: %s", type(fitness_result))
+            return
+
         logger.debug(
             "Saving scenario result for scenario %s", fitness_result.scenario_id
         )
