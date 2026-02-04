@@ -39,11 +39,11 @@ class RNG:
 
     def get_state(self):
         """Get current RNG state for checkpointing."""
-        return self.rng.getstate()
+        return self.rng.bit_generator.state
 
     def set_state(self, state):
         """Restore RNG state from checkpoint."""
-        self.rng.setstate(state)
+        self.rng.bit_generator.state = state
 
 
 rng = RNG()

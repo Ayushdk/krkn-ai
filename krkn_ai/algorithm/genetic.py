@@ -78,6 +78,15 @@ class GeneticAlgorithm:
         self.valid_scenarios = ScenarioFactory.generate_valid_scenarios(
             self.config
         )  # List valid scenarios
+
+        self.valid_scenarios = ScenarioFactory.generate_valid_scenarios(self.config)
+        self.allowed_scenario_classes = {
+            cls.__name__: cls for _, cls in self.valid_scenarios
+        }
+        # Add CompositeScenario for resume functionality (not in valid_scenarios)
+        from krkn_ai.models.scenario.base import CompositeScenario
+
+        self.allowed_scenario_classes["CompositeScenario"] = CompositeScenario
         self.seen_population: Dict[BaseScenario, CommandRunResult] = {}
 
         self.best_of_generation: List[BaseScenario] = []
@@ -178,6 +187,12 @@ class GeneticAlgorithm:
 
         os.replace(temp_file, self.checkpoint_file)
 
+        logger.info(
+            "Checkpoint saved | generation=%d | run_uuid=%s",
+            generation,
+            self.run_uuid,
+        )
+
         logger.debug("Checkpoint saved at generation %d", generation)
 
     def _load_checkpoint(self):
@@ -209,8 +224,11 @@ class GeneticAlgorithm:
             )
             logger.info("Restored %d scenarios to population", len(self.population))
 
-            # Restore seen population
+            # Restore seen population (best-effort)
+            # NOTE: Scenario object keys cannot be safely reconstructed yet.
+            # Seen population will be rebuilt during execution.
             self.seen_population = {}
+            logger.info("Seen population reset (will be rebuilt during resume)")
 
             # Restore best of generation
             logger.info("Restoring best of generation...")
@@ -324,11 +342,8 @@ class GeneticAlgorithm:
                     logger.warning("Cannot serialize scenario: %s", scenario)
                     continue
 
-                # CRITICAL: Adding class metadata for deserialization
                 scenario_dict["__class__"] = scenario.__class__.__name__
-                scenario_dict["__module__"] = scenario.__class__.__module__
 
-                # store string representation for lookup
                 scenario_dict["__str__"] = str(scenario)
 
                 serialized.append(scenario_dict)
@@ -341,52 +356,82 @@ class GeneticAlgorithm:
 
     def _deserialize_scenarios(self, data: List[Dict[str, Any]]) -> List[BaseScenario]:
         """
-        Deserialize scenarios from dictionaries.
+        Deserialize scenarios from dictionaries in a SAFE way.
 
-        Args:
-            data: List of serialized scenarios
-
-        Returns:
-            List of scenario objects
+        Only allow known scenario classes to be restored.
         """
-        scenarios = []
+        scenarios: List[BaseScenario] = []
 
         for scenario_dict in data:
             try:
-                # a copy to avoid modifying original
                 scenario_data = scenario_dict.copy()
 
                 class_name = scenario_data.pop("__class__", None)
-                module_name = scenario_data.pop("__module__", None)
-                scenario_data.pop("__str__", None)  # Remove string representation
+                scenario_data.pop("__module__", None)
+                scenario_data.pop("__str__", None)
 
-                if not class_name or not module_name:
-                    logger.warning("Missing class information in scenario data")
-                    continue
-
-                import importlib
-
-                try:
-                    module = importlib.import_module(module_name)
-                    scenario_class = getattr(module, class_name)
-                except (ImportError, AttributeError) as e:
-                    logger.error(
-                        "Cannot import scenario class %s.%s: %s",
-                        module_name,
-                        class_name,
-                        e,
+                if not class_name:
+                    logger.warning(
+                        "Skipping scenario: missing class name in checkpoint"
                     )
                     continue
 
-                # Recreate the scenario
-                # Try pydantic model_validate first
-                if hasattr(scenario_class, "model_validate"):
-                    scenario = scenario_class.model_validate(scenario_data)
-                else:
-                    # Fall back to direct instantiation
-                    scenario = scenario_class(**scenario_data)
+                scenario_class = self.allowed_scenario_classes.get(class_name)
+                if scenario_class is None:
+                    logger.warning(
+                        "Skipping scenario during resume: class '%s' is not allowlisted",
+                        class_name,
+                    )
+                    continue
 
-                if not hasattr(scenario, "parameters"):
+                # Recreate scenario safely
+                if scenario_class.__name__ == "CompositeScenario":
+                    # CompositeScenario needs special handling for nested scenarios
+                    # Reconstruct scenario_a and scenario_b as fresh instances
+                    active_components = (
+                        self.config.cluster_components.get_active_components()
+                    )
+
+                    # Create fresh instances of nested scenarios (they will be mutated during evolution)
+                    if "scenario_a" in scenario_data and isinstance(
+                        scenario_data["scenario_a"], dict
+                    ):
+                        # Just create a new random scenario of the same type
+                        scenario_data["scenario_a"] = (
+                            ScenarioFactory.generate_random_scenario(
+                                self.config, self.valid_scenarios
+                            )
+                        )
+
+                    if "scenario_b" in scenario_data and isinstance(
+                        scenario_data["scenario_b"], dict
+                    ):
+                        # Just create a new random scenario of the same type
+                        scenario_data["scenario_b"] = (
+                            ScenarioFactory.generate_random_scenario(
+                                self.config, self.valid_scenarios
+                            )
+                        )
+
+                    # Now create CompositeScenario with reconstructed nested scenarios
+                    if hasattr(scenario_class, "model_validate"):
+                        scenario = scenario_class.model_validate(scenario_data)
+                    else:
+                        scenario = scenario_class(**scenario_data)
+                else:
+                    # Regular scenarios need cluster_components and use custom __init__
+                    active_components = (
+                        self.config.cluster_components.get_active_components()
+                    )
+                    scenario = scenario_class(
+                        cluster_components=active_components, **scenario_data
+                    )
+
+                # CompositeScenario doesn't have parameters attribute, but it's valid
+                if (
+                    not hasattr(scenario, "parameters")
+                    and scenario_class.__name__ != "CompositeScenario"
+                ):
                     logger.warning(
                         "Skipping invalid scenario during resume: %s",
                         scenario,
@@ -396,30 +441,37 @@ class GeneticAlgorithm:
                 scenarios.append(scenario)
 
             except Exception as e:
-                logger.error("Failed to deserialize scenario: %s", e)
+                logger.error("Failed to deserialize scenario safely: %s", e)
                 continue
 
         return scenarios
 
     def _serialize_rng_state(self) -> Dict[str, Any]:
-        """Serialize RNG state - saves seed for reproducibility."""
         return {
             "seed": self.config.seed,
+            "bit_generator": rng.rng.bit_generator.__class__.__name__,
+            "state": rng.rng.bit_generator.state,
             "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         }
 
     def _restore_rng_state(self, state_data: Dict[str, Any]):
-        """Restore RNG state - reinitializes with saved seed."""
         if not state_data:
             logger.debug("No RNG state to restore")
             return
+
+        try:
+            state = state_data.get("state")
+            if state:
+                rng.rng.bit_generator.state = state
+                logger.debug("NumPy RNG state restored from checkpoint")
+                return
+        except Exception as e:
+            logger.warning("Failed to restore RNG state: %s", e)
 
         seed = state_data.get("seed")
         if seed is not None:
             rng.set_seed(seed)
             logger.debug("RNG reinitialized with seed: %s", seed)
-        else:
-            logger.warning("No seed in checkpoint, using current RNG state")
 
     def _scenario_to_key(self, scenario: BaseScenario) -> str:
         """

@@ -153,9 +153,9 @@ def _validate_and_create_client(url: str, token: str) -> KrknPrometheus:
         client = KrknPrometheus(url.strip(), token.strip())
         client.process_query("1")
         return client
-    except Exception as e:
+    except Exception:
+        logger.exception("Failed to connect to Prometheus")
         raise PrometheusConnectionError(
-            f"Failed to connect to Prometheus at {url}.\n"
-            f"Error details: {str(e)}\n\n"
-            "Check network connectivity and ensure the token is valid."
-        ) from e
+            f"Failed to connect to Prometheus at {url}. "
+            "Check network connectivity and credentials."
+        )
