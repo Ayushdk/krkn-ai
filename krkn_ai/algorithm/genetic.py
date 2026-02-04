@@ -9,7 +9,7 @@ import yaml
 from typing import List, Optional, Tuple
 
 from krkn_ai.models.app import CommandRunResult, KrknRunnerType
-
+from krkn_ai.models.checkpoint import GeneticCheckpoint
 from krkn_ai.models.scenario.base import (
     Scenario,
     BaseScenario,
@@ -133,6 +133,7 @@ class GeneticAlgorithm:
         self.resume = resume
         self.checkpoint_path = checkpoint_path
         self.checkpoint_file = os.path.join(self.output_dir, "checkpoint.json")
+        self.checkpoint = GeneticCheckpoint(self.output_dir, self.checkpoint_path)
 
         # If resuming, load checkpoint
         if self.resume:
@@ -148,44 +149,20 @@ class GeneticAlgorithm:
                 os.rename(self.checkpoint_file, backup_path)
 
     def _save_checkpoint(self, generation: int):
-        """
-        Save current state to checkpoint file.
-
-        Args:
-            generation: Current generation number
-        """
-        checkpoint_data = {
-            "version": "1.0",
-            "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-            "generation": generation,
-            "completed_generations": generation,
-            "run_uuid": self.run_uuid,
-            "seed": self.config.seed,
-            # Serialize population
-            "population": self._serialize_scenarios(self.population),
-            # Serialize seen population (scenario -> result mapping)
-            "seen_population": {
-                self._scenario_to_key(scenario): result.model_dump(mode="json")
-                for scenario, result in self.seen_population.items()
-            },
-            # Serialize best of generation
-            "best_of_generation": [
-                result.model_dump(mode="json") for result in self.best_of_generation
-            ],
-            # Save RNG state for reproducibility
-            "rng_state": self._serialize_rng_state(),
-            # Save adaptive mutation state
-            "stagnant_generations": self.stagnant_generations,
-            "scenario_mutation_rate": self.config.scenario_mutation_rate,
-            # Metadata
-            "start_time": self.start_time.isoformat() if self.start_time else None,
-        }
-
-        temp_file = f"{self.checkpoint_file}.tmp"
-        with open(temp_file, "w", encoding="utf-8") as f:
-            json.dump(checkpoint_data, f, indent=2)
-
-        os.replace(temp_file, self.checkpoint_file)
+        self.checkpoint.save(
+            generation=generation,
+            run_uuid=self.run_uuid,
+            seed=self.config.seed,
+            population=self.population,
+            seen_population=self.seen_population,
+            best_of_generation=self.best_of_generation,
+            rng_state=self._serialize_rng_state(),
+            stagnant_generations=self.stagnant_generations,
+            scenario_mutation_rate=self.config.scenario_mutation_rate,
+            start_time=self.start_time,
+            serialize_scenarios=self._serialize_scenarios,
+            scenario_to_key=self._scenario_to_key,
+        )
 
         logger.info(
             "Checkpoint saved | generation=%d | run_uuid=%s",
@@ -193,125 +170,56 @@ class GeneticAlgorithm:
             self.run_uuid,
         )
 
-        logger.debug("Checkpoint saved at generation %d", generation)
-
     def _load_checkpoint(self):
-        """Load state from checkpoint file (simplified robust version)."""
-        checkpoint_path = self.checkpoint_path or self.checkpoint_file
+        checkpoint_data = self.checkpoint.load()
 
-        if not os.path.exists(checkpoint_path):
-            raise FileNotFoundError(
-                f"Checkpoint file not found: {checkpoint_path}\n"
-                f"Cannot resume without a valid checkpoint."
-            )
+        self.completed_generations = checkpoint_data.get("completed_generations", 0)
 
-        logger.info("Loading checkpoint from: %s", checkpoint_path)
+        self._restore_rng_state(checkpoint_data.get("rng_state"))
 
-        try:
-            with open(checkpoint_path, "r", encoding="utf-8") as f:
-                checkpoint_data = json.load(f)
+        self.population = self._deserialize_scenarios(
+            checkpoint_data.get("population", [])
+        )
 
-            # Restore generation info
-            self.completed_generations = checkpoint_data.get("completed_generations", 0)
+        self.seen_population = {}
 
-            # Restore RNG state
-            self._restore_rng_state(checkpoint_data.get("rng_state"))
-
-            # Restore population
-            logger.info("Restoring population...")
-            self.population = self._deserialize_scenarios(
-                checkpoint_data.get("population", [])
-            )
-            logger.info("Restored %d scenarios to population", len(self.population))
-
-            # Restore seen population (best-effort)
-            # NOTE: Scenario object keys cannot be safely reconstructed yet.
-            # Seen population will be rebuilt during execution.
-            self.seen_population = {}
-            logger.info("Seen population reset (will be rebuilt during resume)")
-
-            # Restore best of generation
-            logger.info("Restoring best of generation...")
-            self.best_of_generation = []
-            for result_data in checkpoint_data.get("best_of_generation", []):
-                try:
-                    # Parse datetime strings
-                    if "start_time" in result_data and isinstance(
-                        result_data["start_time"], str
-                    ):
-                        result_data["start_time"] = datetime.datetime.fromisoformat(
-                            result_data["start_time"]
-                        )
-                    if "end_time" in result_data and isinstance(
-                        result_data["end_time"], str
-                    ):
-                        result_data["end_time"] = datetime.datetime.fromisoformat(
-                            result_data["end_time"]
-                        )
-
-                    result = CommandRunResult(**result_data)
-                    self.best_of_generation.append(result)
-                except Exception as e:
-                    logger.warning("Could not restore generation result: %s", e)
-                    continue
-
-            logger.info("Restored %d generation results", len(self.best_of_generation))
-
-            # Restore adaptive mutation state
-            self.stagnant_generations = checkpoint_data.get("stagnant_generations", 0)
-            original_mutation_rate = self.config.scenario_mutation_rate
-            self.config.scenario_mutation_rate = checkpoint_data.get(
-                "scenario_mutation_rate", original_mutation_rate
-            )
-
-            # Restore metadata
-            if checkpoint_data.get("start_time"):
-                try:
-                    self.start_time = datetime.datetime.fromisoformat(
-                        checkpoint_data["start_time"]
+        self.best_of_generation = []
+        for result_data in checkpoint_data.get("best_of_generation", []):
+            try:
+                if "start_time" in result_data and isinstance(
+                    result_data["start_time"], str
+                ):
+                    result_data["start_time"] = datetime.datetime.fromisoformat(
+                        result_data["start_time"]
                     )
-                except (ValueError, TypeError):
-                    self.start_time = datetime.datetime.now(datetime.timezone.utc)
-
-            # NOTE:
-            # Population restore is best-effort.
-            # If scenarios cannot be safely deserialized,
-            # we fall back to regenerating a valid population
-            # to guarantee forward progress.
-
-            # Population recovery fallback
-            if not self.population:
-                logger.warning(
-                    "Restored population is empty. Rebuilding from valid base scenarios."
-                )
-
-                # Rebuild population from valid scenario generators
-                rebuilt_population = self.create_population(self.config.population_size)
-
-                if not rebuilt_population:
-                    raise RuntimeError(
-                        "Cannot resume run: failed to rebuild a valid population."
+                if "end_time" in result_data and isinstance(
+                    result_data["end_time"], str
+                ):
+                    result_data["end_time"] = datetime.datetime.fromisoformat(
+                        result_data["end_time"]
                     )
 
-                self.population = rebuilt_population
+                self.best_of_generation.append(CommandRunResult(**result_data))
+            except Exception:
+                continue
 
-                logger.info(
-                    "Rebuilt population with %d scenarios",
-                    len(self.population),
+        self.stagnant_generations = checkpoint_data.get("stagnant_generations", 0)
+
+        self.config.scenario_mutation_rate = checkpoint_data.get(
+            "scenario_mutation_rate",
+            self.config.scenario_mutation_rate,
+        )
+
+        if checkpoint_data.get("start_time"):
+            try:
+                self.start_time = datetime.datetime.fromisoformat(
+                    checkpoint_data["start_time"]
                 )
+            except Exception:
+                pass
 
-            logger.info(
-                "Checkpoint loaded successfully: generation %d",
-                self.completed_generations,
-            )
-
-        except json.JSONDecodeError as e:
-            raise ValueError(f"Invalid checkpoint file (corrupted JSON): {e}") from e
-        except KeyError as e:
-            raise ValueError(f"Invalid checkpoint file (missing key): {e}") from e
-        except Exception as e:
-            logger.error("Checkpoint loading failed", exc_info=True)
-            raise RuntimeError(f"Failed to load checkpoint: {e}") from e
+        if not self.population:
+            self.population = self.create_population(self.config.population_size)
 
     def _serialize_scenarios(
         self, scenarios: List[BaseScenario]

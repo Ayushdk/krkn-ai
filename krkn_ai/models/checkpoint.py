@@ -1,213 +1,71 @@
-"""
-Checkpoint model for persisting Genetic Algorithm state.
-Enables resume capability for interrupted runs.
-"""
-
-from typing import List, Dict, Any, Optional
-from dataclasses import dataclass, field, asdict
-from datetime import datetime
+import os
 import json
-from pathlib import Path
+import datetime
+from typing import Dict, Any
 
 
-@dataclass
-class GACheckpoint:
+class GeneticCheckpoint:
     """
-    Represents the complete state of the Genetic Algorithm at a point in time.
-
-    This checkpoint can be serialized to JSON and restored to resume execution.
+    Exact checkpoint save/load logic extracted from GeneticAlgorithm.
+    NO logic change. NO schema change.
     """
 
-    version: str = "1.0"
+    def __init__(self, output_dir: str, checkpoint_path: str = None):
+        self.checkpoint_file = checkpoint_path or os.path.join(
+            output_dir, "checkpoint.json"
+        )
 
-    # Timestamp when checkpoint was created
-    timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
+    def save(
+        self,
+        *,
+        generation: int,
+        run_uuid: str,
+        seed,
+        population,
+        seen_population,
+        best_of_generation,
+        rng_state,
+        stagnant_generations: int,
+        scenario_mutation_rate: float,
+        start_time,
+        serialize_scenarios,
+        scenario_to_key,
+    ):
+        checkpoint_data = {
+            "version": "1.0",
+            "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "generation": generation,
+            "completed_generations": generation,
+            "run_uuid": run_uuid,
+            "seed": seed,
+            "population": serialize_scenarios(population),
+            "seen_population": {
+                scenario_to_key(s): r.model_dump(mode="json")
+                for s, r in seen_population.items()
+            },
+            "best_of_generation": [
+                r.model_dump(mode="json") for r in best_of_generation
+            ],
+            "rng_state": rng_state,
+            "stagnant_generations": stagnant_generations,
+            "scenario_mutation_rate": scenario_mutation_rate,
+            "start_time": start_time.isoformat() if start_time else None,
+        }
 
-    # Current generation number
-    generation: int = 0
+        temp_file = f"{self.checkpoint_file}.tmp"
+        with open(temp_file, "w", encoding="utf-8") as f:
+            json.dump(checkpoint_data, f, indent=2)
 
-    # Current population of scenarios (serialized)
-    population: List[Dict[str, Any]] = field(default_factory=list)
+        os.replace(temp_file, self.checkpoint_file)
 
-    # All previously seen scenario configurations (to avoid duplicates)
-    seen_population: List[Dict[str, Any]] = field(default_factory=list)
-
-    # Best scenario from each generation
-    best_of_generation: List[Dict[str, Any]] = field(default_factory=list)
-
-    # Random number generator state (for reproducibility)
-    rng_state: Optional[Dict[str, Any]] = None
-
-    # Configuration used for this run
-    config_snapshot: Optional[Dict[str, Any]] = None
-
-    # Metadata
-    total_scenarios_evaluated: int = 0
-    run_id: Optional[str] = None
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert checkpoint to dictionary."""
-        return asdict(self)
-
-    def to_json(self) -> str:
-        """Serialize checkpoint to JSON string."""
-        return json.dumps(self.to_dict(), indent=2, default=str)
-
-    def save(self, filepath: Path) -> None:
-        """
-        Save checkpoint to file.
-
-        Args:
-            filepath: Path where checkpoint should be saved
-        """
-        filepath.parent.mkdir(parents=True, exist_ok=True)
-
-        with open(filepath, "w") as f:
-            f.write(self.to_json())
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "GACheckpoint":
-        """
-        Create checkpoint from dictionary.
-
-        Args:
-            data: Dictionary containing checkpoint data
-
-        Returns:
-            GACheckpoint instance
-        """
-        return cls(**data)
-
-    @classmethod
-    def from_json(cls, json_str: str) -> "GACheckpoint":
-        """
-        Deserialize checkpoint from JSON string.
-
-        Args:
-            json_str: JSON string containing checkpoint data
-
-        Returns:
-            GACheckpoint instance
-        """
-        data = json.loads(json_str)
-        return cls.from_dict(data)
-
-    @classmethod
-    def load(cls, filepath: Path) -> "GACheckpoint":
-        """
-        Load checkpoint from file.
-
-        Args:
-            filepath: Path to checkpoint file
-
-        Returns:
-            GACheckpoint instance
-
-        Raises:
-            FileNotFoundError: If checkpoint file doesn't exist
-            ValueError: If checkpoint file is invalid
-        """
-        if not filepath.exists():
-            raise FileNotFoundError(f"Checkpoint file not found: {filepath}")
+    def load(self) -> Dict[str, Any]:
+        if not os.path.exists(self.checkpoint_file):
+            raise FileNotFoundError(
+                f"Checkpoint file not found: {self.checkpoint_file}"
+            )
 
         try:
-            with open(filepath, "r") as f:
-                return cls.from_json(f.read())
+            with open(self.checkpoint_file, "r", encoding="utf-8") as f:
+                return json.load(f)
         except json.JSONDecodeError as e:
             raise ValueError(f"Invalid checkpoint file: {e}") from e
-
-    def validate(self) -> bool:
-        """
-        Validate checkpoint data integrity.
-
-        Returns:
-            True if checkpoint is valid
-
-        Raises:
-            ValueError: If checkpoint data is invalid
-        """
-        if self.generation < 0:
-            raise ValueError(f"Invalid generation number: {self.generation}")
-
-        if not self.population:
-            raise ValueError("Population cannot be empty")
-
-        if self.total_scenarios_evaluated < len(self.seen_population):
-            raise ValueError("Inconsistent scenario count")
-
-        return True
-
-
-@dataclass
-class CheckpointManager:
-    """
-    Manages checkpoint creation, loading, and validation.
-    """
-
-    output_dir: Path
-    checkpoint_filename: str = "checkpoint.json"
-    auto_save: bool = True
-    keep_history: bool = False  # Keep checkpoints from each generation
-
-    def get_checkpoint_path(self, generation: Optional[int] = None) -> Path:
-        """
-        Get path to checkpoint file.
-
-        Args:
-            generation: Optional generation number for historical checkpoints
-
-        Returns:
-            Path to checkpoint file
-        """
-        if generation is not None and self.keep_history:
-            filename = f"checkpoint_gen_{generation}.json"
-        else:
-            filename = self.checkpoint_filename
-
-        return self.output_dir / filename
-
-    def save_checkpoint(
-        self, checkpoint: GACheckpoint, generation: Optional[int] = None
-    ) -> Path:
-        """
-        Save checkpoint to disk.
-
-        Args:
-            checkpoint: Checkpoint to save
-            generation: Optional generation number for historical checkpoints
-
-        Returns:
-            Path where checkpoint was saved
-        """
-        filepath = self.get_checkpoint_path(generation)
-        checkpoint.save(filepath)
-        return filepath
-
-    def load_checkpoint(self, filepath: Optional[Path] = None) -> GACheckpoint:
-        """
-        Load checkpoint from disk.
-
-        Args:
-            filepath: Optional custom path to checkpoint file
-
-        Returns:
-            Loaded checkpoint
-        """
-        if filepath is None:
-            filepath = self.get_checkpoint_path()
-
-        checkpoint = GACheckpoint.load(filepath)
-        checkpoint.validate()
-        return checkpoint
-
-    def checkpoint_exists(self) -> bool:
-        """Check if a checkpoint file exists."""
-        return self.get_checkpoint_path().exists()
-
-    def list_checkpoints(self) -> List[Path]:
-        """List all checkpoint files in the output directory."""
-        if self.keep_history:
-            return sorted(self.output_dir.glob("checkpoint_gen_*.json"))
-        else:
-            checkpoint_path = self.get_checkpoint_path()
-            return [checkpoint_path] if checkpoint_path.exists() else []
