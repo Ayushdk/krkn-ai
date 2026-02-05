@@ -6,7 +6,7 @@ import time
 import uuid
 from typing_extensions import Dict
 import yaml
-from typing import List, Optional, Tuple
+from typing import List, Optional, Any
 
 from krkn_ai.models.app import CommandRunResult, KrknRunnerType
 from krkn_ai.models.checkpoint import GeneticCheckpoint
@@ -65,6 +65,10 @@ class GeneticAlgorithm:
         self.population: List[BaseScenario] = []
 
         self.stagnant_generations = 0
+
+        self.saturation_stagnant_generations = 0
+        self.exploration_stagnant_generations = 0
+        self.new_scenarios_in_generation = 0
 
         self.valid_scenarios = ScenarioFactory.generate_valid_scenarios(
             self.config
@@ -508,6 +512,14 @@ class GeneticAlgorithm:
                 self.population.extend(
                     self.create_population(self.config.population_injection_size)
                 )
+
+            cur_generation += 1
+            # SAVE CHECKPOINT AFTER EACH GENERATION
+            try:
+                self._save_checkpoint(cur_generation)
+            except Exception as e:
+                logger.error("Failed to save checkpoint: %s", e)
+                # Continue execution even if checkpoint fails
 
     def adapt_mutation_rate(self):
         cfg = self.config.adaptive_mutation
